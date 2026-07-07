@@ -1,0 +1,9 @@
+# Dependencies — huge, and can always be regenerated with `npm install`
+node_modules/
+
+# OS junk files
+.DS_Store
+
+# Editor folders
+.vscode/
+.idea/

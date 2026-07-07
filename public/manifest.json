@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+
+  "name": "Gmail Cleanup",
+  "version": "0.1.0",
+  "description": "Find and clean up storage-heavy emails in your Gmail inbox.",
+
+  "action": {
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["index.html", "assets/*"],
+      "matches": ["https://mail.google.com/*"]
+    }
+  ],
+
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+
+  "permissions": ["identity", "storage", "unlimitedStorage"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+
+  "oauth2": {
+    "client_id": "574216421018-db6hnmd35iu34d88uk32ab5t65pb73hb.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/gmail.modify"]
+  }
+}

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Gmail Cleanup</title>
+    <!-- Basic sizing so the popup window isn't tiny or huge.
+         Chrome popups are just small web pages. -->
+    <style>
+      body {
+        width: 280px;
+        font-family: sans-serif;
+        padding: 16px;
+      }
+      button {
+        padding: 8px 12px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      #status {
+        margin-top: 12px;
+        font-size: 13px;
+        color: #333;
+      }
+      hr {
+        margin: 16px 0;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      #emailList {
+        max-height: 200px;
+        overflow-y: auto;
+        padding-left: 18px;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      #emailList li {
+        margin-bottom: 6px;
+      }
+      #storageIndicator {
+        margin: 8px 0 4px;
+        font-size: 13px;
+        font-weight: bold;
+        color: #1a73e8;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Gmail Cleanup</h1>
+
+    <!-- Clicking this kicks off the Google sign-in popup -->
+    <button id="connectBtn">Connect Gmail</button>
+
+    <!-- We'll show success/error messages here -->
+    <div id="status"></div>
+
+    <hr />
+
+    <h2>Storage-heavy emails</h2>
+    <!-- Disabled until we've connected and have a token -->
+    <button id="findBtn" disabled>Find emails over 5MB</button>
+
+    <!-- Shows total size that could be freed, e.g. "Could free 247 MB" -->
+    <div id="storageIndicator"></div>
+
+    <ul id="emailList"></ul>
+
+    <!-- gmail.js defines the API helper functions popup.js uses below -->
+    <script src="gmail.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
