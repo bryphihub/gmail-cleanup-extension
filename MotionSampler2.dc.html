@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+@keyframes msSheen{from{transform:translateX(-120%) skewX(-18deg)}to{transform:translateX(340%) skewX(-18deg)}}
+</style>
+<script src="./shader-glow.js"></script>
+</helmet>
+<div style="width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;padding:16px;background:var(--bg,#f6f5f1);color:var(--ink,#26231e);font-family:var(--font,system-ui,sans-serif);font-size:13px;line-height:1.4">
+
+  <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint,#a8a294)">Toggle</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;background:var(--chip,#edeae2);border-radius:8px;padding:2px;position:relative;margin-bottom:8px">
+    <sc-if value="{{ hasThumb }}" hint-placeholder-val="{{ true }}"><div style="{{ thumbS }}"></div></sc-if>
+    <button onClick="{{ h.segInbox.click }}" onMouseEnter="{{ h.segInbox.enter }}" onMouseLeave="{{ h.segInbox.leave }}" onMouseDown="{{ h.segInbox.down }}" onMouseUp="{{ h.segInbox.up }}" style="{{ segInboxS }}">Inbox</button>
+    <button onClick="{{ h.segAll.click }}" onMouseEnter="{{ h.segAll.enter }}" onMouseLeave="{{ h.segAll.leave }}" onMouseDown="{{ h.segAll.down }}" onMouseUp="{{ h.segAll.up }}" style="{{ segAllS }}">All mail</button>
+  </div>
+
+  <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint,#a8a294)">Sort pills</div>
+  <div style="align-self:flex-start;display:flex;gap:2px;background:var(--chip,#edeae2);border-radius:999px;padding:2px;position:relative;margin-bottom:8px">
+    <sc-if value="{{ hasThumb }}" hint-placeholder-val="{{ true }}"><div style="{{ pillThumbS }}"></div></sc-if>
+    <button onClick="{{ h.pillSize.click }}" onMouseEnter="{{ h.pillSize.enter }}" onMouseLeave="{{ h.pillSize.leave }}" onMouseDown="{{ h.pillSize.down }}" onMouseUp="{{ h.pillSize.up }}" style="{{ pillSizeS }}">Size</button>
+    <button onClick="{{ h.pillCount.click }}" onMouseEnter="{{ h.pillCount.enter }}" onMouseLeave="{{ h.pillCount.leave }}" onMouseDown="{{ h.pillCount.down }}" onMouseUp="{{ h.pillCount.up }}" style="{{ pillCountS }}">Count</button>
+  </div>
+
+  <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint,#a8a294)">Primary action</div>
+  <button onClick="{{ h.primary.click }}" onMouseEnter="{{ h.primary.enter }}" onMouseLeave="{{ h.primary.leave }}" onMouseDown="{{ h.primary.down }}" onMouseUp="{{ h.primary.up }}" style="{{ primaryS }}">
+    <sc-if value="{{ hasShader }}" hint-placeholder-val="{{ false }}"><shader-glow paused="{{ shaderPaused }}" style="position:absolute;inset:0;pointer-events:none"></shader-glow></sc-if>
+    <sc-if value="{{ hasSheen }}" hint-placeholder-val="{{ false }}"><span style="{{ sheenS }}"></span></sc-if>
+    <span style="position:relative;text-shadow:0 1px 2px rgba(20,40,80,.18)">{{ primaryLabel }}</span>
+  </button>
+  <div style="height:2px"></div>
+
+  <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint,#a8a294)">Preset chips</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+    <button onClick="{{ h.chip1.click }}" onMouseEnter="{{ h.chip1.enter }}" onMouseLeave="{{ h.chip1.leave }}" onMouseDown="{{ h.chip1.down }}" onMouseUp="{{ h.chip1.up }}" style="{{ chip1S }}">Social notifications</button>
+    <button onClick="{{ h.chip2.click }}" onMouseEnter="{{ h.chip2.enter }}" onMouseLeave="{{ h.chip2.leave }}" onMouseDown="{{ h.chip2.down }}" onMouseUp="{{ h.chip2.up }}" style="{{ chip2S }}">Shipping &amp; receipts</button>
+  </div>
+
+  <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint,#a8a294)">Destructive</div>
+  <button onClick="{{ h.danger.click }}" onMouseEnter="{{ h.danger.enter }}" onMouseLeave="{{ h.danger.leave }}" onMouseDown="{{ h.danger.down }}" onMouseUp="{{ h.danger.up }}" style="{{ dangerS }}">Move all 512 to Trash…</button>
+  <div style="height:2px"></div>
+
+  <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint,#a8a294)">Selectable card</div>
+  <div onClick="{{ h.card.click }}" onMouseEnter="{{ h.card.enter }}" onMouseLeave="{{ h.card.leave }}" onMouseDown="{{ h.card.down }}" onMouseUp="{{ h.card.up }}" style="{{ cardS }}">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="{{ beadS }}"></span>
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:600;font-size:12.5px">Groupon</div>
+        <div style="font-size:11px;color:var(--sub,#6f6a60)">1,204 emails · 310 MB</div>
+      </div>
+      <span style="font-size:11px;color:var(--faint,#a8a294)">{{ cardHint }}</span>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:400,&quot;height&quot;:560},&quot;motion&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;springy&quot;,&quot;options&quot;:[&quot;springy&quot;,&quot;dissolve&quot;,&quot;tactile&quot;,&quot;glide&quot;,&quot;snap&quot;,&quot;tacspring&quot;,&quot;glidespring&quot;,&quot;glidespringfast&quot;,&quot;shaderhover&quot;,&quot;shaderalways&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Motion&quot;}}">
+class Component extends DCLogic {
+  state = { scope: 'inbox', sort: 'size', card: false, chips: {}, scanning: false, hov: null, prs: null };
+
+  presets() {
+    const springyBtns = {
+      primaryT: 'transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s ease, filter .2s ease',
+      primaryHover: 'transform:translateY(-1.5px);box-shadow:0 5px 14px rgba(43,95,174,.35);filter:brightness(1.04)',
+      primaryActive: 'transform:translateY(0) scale(.96);box-shadow:0 1px 3px rgba(43,95,174,.3)',
+      chipT: 'transform .25s cubic-bezier(.34,1.56,.64,1), border-color .18s, color .18s, box-shadow .2s, background .18s',
+      chipHover: 'transform:translateY(-1.5px);border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow)',
+      chipActive: 'transform:scale(.95)',
+      dangerHover: 'transform:translateY(-1.5px);box-shadow:var(--shadow);background:rgba(166,61,46,.05)',
+      cardT: 'transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .25s, background .15s, border-color .15s',
+      cardHover: 'transform:translateY(-2px);box-shadow:0 6px 16px rgba(40,35,25,.12)',
+      cardActive: 'transform:scale(.985)'
+    };
+    return {
+      tacspring: Object.assign({
+        thumbT: 'transform .16s cubic-bezier(.2,0,.2,1)',
+        segT: 'color .12s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        segActive: 'transform:scale(.92)'
+      }, springyBtns),
+      shaderhover: Object.assign({
+        thumbT: 'transform .34s cubic-bezier(.22,1,.36,1)',
+        segT: 'color .26s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        segActive: 'transform:scale(.92)',
+        shader: 'hover'
+      }, springyBtns, {
+        primaryT: 'transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s ease',
+        primaryHover: 'box-shadow:0 4px 12px rgba(43,95,174,.3)',
+        primaryActive: 'transform:scale(.96);box-shadow:0 1px 3px rgba(43,95,174,.3)'
+      }),
+      shaderalways: Object.assign({
+        thumbT: 'transform .34s cubic-bezier(.22,1,.36,1)',
+        segT: 'color .26s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        segActive: 'transform:scale(.92)',
+        shader: 'always'
+      }, springyBtns),
+      glidespringfast: Object.assign({
+        thumbT: 'transform .34s cubic-bezier(.22,1,.36,1)',
+        segT: 'color .26s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        segActive: 'transform:scale(.92)',
+        sheen: 'subtle'
+      }, springyBtns),
+      glidespring: Object.assign({
+        thumbT: 'transform .45s cubic-bezier(.22,1,.36,1)',
+        segT: 'color .3s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        segActive: 'transform:scale(.92)',
+        sheen: 'subtle'
+      }, springyBtns),
+      springy: {
+        thumbT: 'transform .42s cubic-bezier(.34,1.8,.5,1)',
+        segT: 'color .18s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        segActive: 'transform:scale(.92)',
+        primaryT: 'transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s ease, filter .2s ease',
+        primaryHover: 'transform:translateY(-1.5px);box-shadow:0 5px 14px rgba(43,95,174,.35);filter:brightness(1.04)',
+        primaryActive: 'transform:translateY(0) scale(.96);box-shadow:0 1px 3px rgba(43,95,174,.3)',
+        chipT: 'transform .25s cubic-bezier(.34,1.56,.64,1), border-color .18s, color .18s, box-shadow .2s, background .18s',
+        chipHover: 'transform:translateY(-1.5px);border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow)',
+        chipActive: 'transform:scale(.95)',
+        dangerHover: 'transform:translateY(-1.5px);box-shadow:var(--shadow);background:rgba(166,61,46,.05)',
+        cardT: 'transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .25s, background .15s, border-color .15s',
+        cardHover: 'transform:translateY(-2px);box-shadow:0 6px 16px rgba(40,35,25,.12)',
+        cardActive: 'transform:scale(.985)'
+      },
+      dissolve: {
+        thumbT: null,
+        segT: 'background .28s ease, color .28s ease, box-shadow .28s ease, opacity .2s ease',
+        segHover: 'color:var(--ink)',
+        segActive: 'opacity:.6',
+        primaryT: 'filter .25s ease, opacity .2s ease',
+        primaryHover: 'filter:brightness(1.08)',
+        primaryActive: 'filter:brightness(.88)',
+        chipT: 'background .25s ease, color .25s ease, border-color .25s ease',
+        chipHover: 'background:var(--sel);border-color:transparent;color:var(--accent)',
+        chipActive: 'background:var(--chip);color:var(--ink)',
+        dangerHover: 'background:rgba(166,61,46,.07);border-color:transparent',
+        dangerActive: 'background:rgba(166,61,46,.14)',
+        cardT: 'background .3s ease, border-color .3s ease',
+        cardHover: 'background:var(--sel)',
+        cardActive: 'background:var(--chip)'
+      },
+      tactile: {
+        thumbT: 'transform .16s cubic-bezier(.2,0,.2,1)',
+        segT: 'color .12s ease, transform .07s ease',
+        segActive: 'transform:translateY(1.5px)',
+        primaryT: 'transform .07s ease, box-shadow .12s ease',
+        primaryHover: 'box-shadow:inset 0 0 0 2px rgba(255,255,255,.22), 0 2px 6px rgba(43,95,174,.3)',
+        primaryActive: 'transform:translateY(2px);box-shadow:inset 0 2px 5px rgba(0,0,0,.25)',
+        chipT: 'transform .07s ease, border-color .15s ease, box-shadow .1s ease',
+        chipHover: 'border-color:var(--accent)',
+        chipActive: 'transform:translateY(2px);box-shadow:inset 0 1px 3px rgba(0,0,0,.12)',
+        dangerHover: 'border-color:var(--danger)',
+        dangerActive: 'transform:translateY(2px);box-shadow:inset 0 1px 3px rgba(0,0,0,.12)',
+        cardT: 'border-color .15s ease, background .15s ease, transform .07s ease, box-shadow .1s ease',
+        cardHover: 'border-color:var(--accent)',
+        cardActive: 'transform:translateY(1.5px);box-shadow:inset 0 1px 3px rgba(0,0,0,.06)'
+      },
+      glide: {
+        thumbT: 'transform .45s cubic-bezier(.22,1,.36,1)',
+        segT: 'color .3s ease, transform .35s cubic-bezier(.22,1,.36,1)',
+        segActive: 'transform:scale(.97)',
+        sheen: true,
+        primaryT: 'filter .3s ease, transform .35s cubic-bezier(.22,1,.36,1)',
+        primaryHover: 'filter:brightness(1.05)',
+        primaryActive: 'filter:brightness(.9);transform:scale(.985)',
+        chipT: 'border-color .35s cubic-bezier(.22,1,.36,1), color .35s cubic-bezier(.22,1,.36,1), transform .35s cubic-bezier(.22,1,.36,1)',
+        chipHover: 'border-color:var(--accent);color:var(--accent)',
+        chipActive: 'transform:scale(.97)',
+        dangerHover: 'border-color:var(--danger)',
+        dangerActive: 'transform:scale(.97)',
+        cardT: 'transform .4s cubic-bezier(.22,1,.36,1), background .3s ease, border-color .3s ease',
+        cardHover: 'transform:translateX(3px)',
+        cardActive: 'transform:translateX(3px) scale(.99)'
+      },
+      snap: {
+        thumbT: 'transform .11s linear',
+        segT: 'color .07s linear, transform .05s linear',
+        segActive: 'transform:scale(.92)',
+        primaryT: 'transform .07s linear, filter .07s linear',
+        primaryHover: 'filter:brightness(1.12)',
+        primaryActive: 'transform:scale(.95);filter:brightness(.85)',
+        chipT: 'transform .07s linear, background .07s linear, border-color .07s linear',
+        chipHover: 'background:var(--chip)',
+        chipActive: 'transform:scale(.93)',
+        dangerHover: 'background:rgba(166,61,46,.08)',
+        dangerActive: 'transform:scale(.96);background:rgba(166,61,46,.14)',
+        cardT: 'border-color .07s linear, background .07s linear, transform .05s linear',
+        cardHover: 'border-color:var(--accent)',
+        cardActive: 'transform:scale(.99)'
+      }
+    };
+  }
+
+  mk(id, click) {
+    return {
+      enter: () => this.setState({ hov: id }),
+      leave: () => this.setState(s => ({ hov: s.hov === id ? null : s.hov, prs: s.prs === id ? null : s.prs })),
+      down: () => this.setState({ prs: id }),
+      up: () => this.setState(s => ({ prs: s.prs === id ? null : s.prs })),
+      click: click || (() => {})
+    };
+  }
+
+  fx(id, base, hover, active) {
+    let s = base;
+    if (this.state.hov === id && hover) s += ';' + hover;
+    if (this.state.prs === id && active) s += ';' + active;
+    return s;
+  }
+
+  renderVals() {
+    const st = this.state;
+    const p = this.presets()[this.props.motion ?? 'springy'] || this.presets().springy;
+    const hasThumb = !!p.thumbT;
+
+    const seg = a => 'flex:1;position:relative;z-index:1;text-align:center;padding:8px 4px;border-radius:6px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border:none;background:' +
+      (!hasThumb && a ? 'var(--card,#fffefb)' : 'transparent') +
+      ';color:' + (a ? 'var(--ink,#26231e)' : 'var(--sub,#6f6a60)') +
+      ';box-shadow:' + (!hasThumb && a ? 'var(--shadow)' : 'none') +
+      ';transition:' + p.segT;
+    const pill = a => 'border:none;position:relative;z-index:1;border-radius:999px;width:56px;padding:4px 0;text-align:center;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;background:' +
+      (!hasThumb && a ? 'var(--card,#fffefb)' : 'transparent') +
+      ';color:' + (a ? 'var(--ink,#26231e)' : 'var(--sub,#6f6a60)') +
+      ';box-shadow:' + (!hasThumb && a ? 'var(--shadow)' : 'none') +
+      ';transition:' + p.segT;
+    const segHover = p.segHover || 'color:var(--ink,#26231e)';
+
+    const chipBase = on => 'padding:9px 6px;border-radius:8px;border:1px solid ' + (on ? 'var(--accent,#2f6bc4)' : 'var(--line,#e6e2d8)') + ';background:' + (on ? 'var(--sel,#e9eff8)' : 'var(--card,#fffefb)') + ';color:' + (on ? 'var(--accent,#2f6bc4)' : 'var(--ink,#26231e)') + ';font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:' + p.chipT;
+
+    const sel = st.card;
+    const cardBase = 'cursor:pointer;user-select:none;padding:11px 12px;border-radius:10px;border:1px solid ' + (sel ? 'var(--accent,#2f6bc4)' : 'var(--line,#e6e2d8)') + ';background:' + (sel ? 'var(--sel,#e9eff8)' : 'var(--card,#fffefb)') + ';box-shadow:var(--shadow);transition:' + p.cardT;
+
+    return {
+      h: {
+        segInbox: this.mk('segInbox', () => this.setState({ scope: 'inbox' })),
+        segAll: this.mk('segAll', () => this.setState({ scope: 'all' })),
+        pillSize: this.mk('pillSize', () => this.setState({ sort: 'size' })),
+        pillCount: this.mk('pillCount', () => this.setState({ sort: 'count' })),
+        primary: this.mk('primary', () => {
+          if (this.state.scanning) return;
+          this.setState({ scanning: true });
+          setTimeout(() => this.setState({ scanning: false }), 1400);
+        }),
+        chip1: this.mk('chip1', () => this.setState(s => ({ chips: { ...s.chips, c1: !s.chips.c1 } }))),
+        chip2: this.mk('chip2', () => this.setState(s => ({ chips: { ...s.chips, c2: !s.chips.c2 } }))),
+        danger: this.mk('danger'),
+        card: this.mk('card', () => this.setState(s => ({ card: !s.card })))
+      },
+
+      hasThumb,
+      thumbS: 'position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 3px);border-radius:6px;background:var(--card,#fffefb);box-shadow:var(--shadow);transition:' + (p.thumbT || 'none') + ';transform:translateX(' + (st.scope === 'all' ? 'calc(100% + 2px)' : '0') + ')',
+      pillThumbS: 'position:absolute;top:2px;bottom:2px;left:2px;width:56px;border-radius:999px;background:var(--card,#fffefb);box-shadow:var(--shadow);transition:' + (p.thumbT || 'none') + ';transform:translateX(' + (st.sort === 'count' ? '58px' : '0') + ')',
+      segInboxS: this.fx('segInbox', seg(st.scope === 'inbox'), segHover, p.segActive),
+      segAllS: this.fx('segAll', seg(st.scope === 'all'), segHover, p.segActive),
+      pillSizeS: this.fx('pillSize', pill(st.sort === 'size'), segHover, p.segActive),
+      pillCountS: this.fx('pillCount', pill(st.sort === 'count'), segHover, p.segActive),
+
+      hasShader: !!p.shader,
+      shaderPaused: (p.shader === 'hover' && this.state.hov !== 'primary' && !st.scanning) ? 'true' : 'false',
+      hasSheen: !!p.sheen,
+      sheenS: p.sheen === 'subtle'
+        ? 'position:absolute;top:0;bottom:0;left:0;width:55%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);animation:msSheen 4.5s linear infinite;pointer-events:none'
+        : 'position:absolute;top:0;bottom:0;left:0;width:34%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:msSheen 2.6s ease-in-out infinite;pointer-events:none',
+      primaryLabel: st.scanning ? 'Scanning…' : 'Scan All mail',
+      primaryS: this.fx('primary', 'position:relative;overflow:hidden;width:100%;padding:11px;border-radius:8px;border:none;background:var(--accent-grad,var(--accent,#2f6bc4));color:var(--accent-ink,#fff);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:' + p.primaryT + (st.scanning ? ';opacity:.75' : ''), p.primaryHover, p.primaryActive),
+
+      chip1S: this.fx('chip1', chipBase(!!st.chips.c1), st.chips.c1 ? '' : p.chipHover, p.chipActive),
+      chip2S: this.fx('chip2', chipBase(!!st.chips.c2), st.chips.c2 ? '' : p.chipHover, p.chipActive),
+
+      dangerS: this.fx('danger', 'width:100%;padding:9px;border-radius:8px;border:1px solid var(--dbtn-border,#ddc5bd);background:var(--dbtn-bg,transparent);color:var(--dbtn-ink,#a63d2e);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:' + p.chipT, p.dangerHover, p.dangerActive || p.chipActive),
+
+      cardS: this.fx('card', cardBase, sel ? '' : p.cardHover, p.cardActive),
+      cardHint: sel ? 'selected' : 'click to select',
+      beadS: 'flex:none;width:12px;height:12px;border-radius:50%;box-sizing:border-box;border:2px solid ' + (sel ? 'var(--accent,#2f6bc4)' : 'var(--faint,#a8a294)') + ';background:' + (sel ? 'var(--accent-grad,var(--accent,#2f6bc4))' : 'var(--bg,#f6f5f1)') + ';transition:background .15s, border-color .15s'
+    };
+  }
+}
+</script>
+</body>
+</html>

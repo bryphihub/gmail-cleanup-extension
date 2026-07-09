@@ -15,6 +15,7 @@
 @keyframes gcInL{from{transform:translateX(-22px);opacity:0}to{transform:none;opacity:1}}
 @keyframes gcInR{from{transform:translateX(22px);opacity:0}to{transform:none;opacity:1}}
 </style>
+<script src="./shader-glow.js"></script>
 </helmet>
 <div style="width:100%;height:100%;display:flex;flex-direction:column;background:var(--bg,#f6f5f1);color:var(--ink,#26231e);font-family:var(--font,system-ui,sans-serif);font-size:13px;line-height:1.4;overflow:hidden;position:relative;box-sizing:border-box">
 
@@ -31,8 +32,8 @@
   <!-- Tabs -->
   <div style="margin:10px 14px 0;display:grid;grid-template-columns:1fr 1fr;gap:2px;background:var(--chip,#edeae2);border-radius:var(--radius-sm,8px);padding:2px;flex:none;position:relative">
     <div style="{{ tabThumbS }}"></div>
-    <button onClick="{{ goSearch }}" style="{{ tabSearchS }}">Search</button>
-    <button onClick="{{ goSenders }}" style="{{ tabSendersS }}">Top Senders</button>
+    <button onClick="{{ goSearch }}" style="{{ tabSearchS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">Search</button>
+    <button onClick="{{ goSenders }}" style="{{ tabSendersS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">Top Senders</button>
   </div>
 
   <!-- Scrollable body -->
@@ -49,10 +50,10 @@
             <div style="font-weight:600;font-size:12px;margin-bottom:2px">Quick presets</div>
             <div style="font-size:11px;color:var(--faint);margin-bottom:10px">One-click searches ignore the filters below.</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-              <button onClick="{{ presetSocial }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer" style-hover="border-color:var(--accent);color:var(--accent)">Social notifications</button>
-              <button onClick="{{ presetShipping }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer" style-hover="border-color:var(--accent);color:var(--accent)">Shipping &amp; receipts</button>
-              <button onClick="{{ presetCalendar }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer" style-hover="border-color:var(--accent);color:var(--accent)">Old calendar invites</button>
-              <button onClick="{{ presetUnsub }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer" style-hover="border-color:var(--accent);color:var(--accent)">Unsubscribe confirmations</button>
+              <button onClick="{{ presetSocial }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), border-color .18s, color .18s, box-shadow .2s" style-hover="transform:translateY(-1.5px);border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Social notifications</button>
+              <button onClick="{{ presetShipping }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), border-color .18s, color .18s, box-shadow .2s" style-hover="transform:translateY(-1.5px);border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Shipping &amp; receipts</button>
+              <button onClick="{{ presetCalendar }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), border-color .18s, color .18s, box-shadow .2s" style-hover="transform:translateY(-1.5px);border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Old calendar invites</button>
+              <button onClick="{{ presetUnsub }}" style="padding:8px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), border-color .18s, color .18s, box-shadow .2s" style-hover="transform:translateY(-1.5px);border-color:var(--accent);color:var(--accent);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Unsubscribe confirmations</button>
             </div>
           </div>
 
@@ -81,7 +82,7 @@
             <label style="display:grid;gap:4px;font-size:11px;font-weight:600;color:var(--sub)">From <span style="font-weight:400;color:var(--faint)">(optional)</span>
               <input value="{{ fFrom }}" onChange="{{ setFrom }}" placeholder="newsletter@example.com" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--card);font-family:inherit;font-size:12.5px;color:var(--ink)">
             </label>
-            <button onClick="{{ runSearch }}" style="margin-top:2px;padding:11px;border-radius:var(--radius-sm);border:none;background:var(--accent-grad,var(--accent));color:var(--accent-ink,#fff);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer" style-hover="filter:brightness(1.06)">Search</button>
+            <button onClick="{{ runSearch }}" onMouseEnter="{{ searchGlowIn }}" onMouseLeave="{{ searchGlowOut }}" style="margin-top:2px;position:relative;overflow:hidden;padding:11px;border-radius:var(--radius-sm);border:none;background:var(--accent-grad,var(--accent));color:var(--accent-ink,#fff);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s ease" style-hover="box-shadow:0 4px 12px rgba(43,95,174,.3)" style-active="transform:scale(.96);box-shadow:0 1px 3px rgba(43,95,174,.3)"><shader-glow paused="{{ searchGlowPaused }}" style="position:absolute;inset:0;pointer-events:none"></shader-glow><span style="position:relative;text-shadow:0 1px 2px rgba(20,40,80,.18)">Search</span></button>
             <div style="font-size:11px;color:var(--faint);text-align:center">Searching changes nothing — you choose what to remove.</div>
           </div>
         </sc-if>
@@ -110,7 +111,7 @@
             </div>
             <div style="font-size:11px;color:var(--faint);margin-top:2px">Showing the first 500 · sizes are estimates</div>
             <sc-if value="{{ canTrashAll }}" hint-placeholder-val="{{ false }}">
-              <button onClick="{{ trashAll }}" style="margin-top:10px;width:100%;padding:9px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Move all {{ matchCount }} to Trash…</button>
+              <button onClick="{{ trashAll }}" style="margin-top:10px;width:100%;padding:9px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s, background .18s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow);background:rgba(166,61,46,.05)" style-active="transform:scale(.95)">Move all {{ matchCount }} to Trash…</button>
             </sc-if>
             <sc-if value="{{ taBusy }}" hint-placeholder-val="{{ false }}">
               <div style="margin-top:10px">
@@ -155,7 +156,7 @@
                   <div style="position:absolute;top:-3px;bottom:-3px;left:50%;width:2px;margin-left:-1px;background:var(--line)"></div>
                   <div style="position:relative;width:12px;height:12px;border-radius:50%;box-sizing:border-box;border:2px solid {{ m.beadBorder }};background:{{ m.beadBg }};transition:background .12s,border-color .12s"></div>
                 </div>
-                <div onClick="{{ m.toggle }}" style="flex:1;min-width:0;cursor:pointer;padding:8px 10px;border-radius:var(--radius-sm);border:1px solid {{ m.border }};background:{{ m.bg }};transition:background .12s">
+                <div onClick="{{ m.toggle }}" style="flex:1;min-width:0;cursor:pointer;padding:8px 10px;border-radius:var(--radius-sm);border:1px solid {{ m.border }};background:{{ m.bg }};transition:transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .25s, background .15s, border-color .15s" style-hover="transform:translateY(-2px);box-shadow:0 6px 16px rgba(40,35,25,.12)">
                   <div style="display:flex;gap:8px;align-items:baseline">
                     <span style="font-weight:600;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.from }}</span>
                     <span style="margin-left:auto;flex:none;font-size:11px;color:var(--faint);font-family:var(--num,inherit)">{{ m.meta }}</span>
@@ -179,8 +180,8 @@
                 <button onClick="{{ clearM }}" style="margin-left:auto;border:none;background:transparent;color:var(--faint);font-family:inherit;font-size:11.5px;cursor:pointer;padding:0" style-hover="color:var(--ink)">Clear</button>
               </div>
               <div style="display:flex;gap:8px">
-                <button onClick="{{ trashSel }}" style="flex:1.2;padding:9px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Move to Trash…</button>
-                <button onClick="{{ archiveSel }}" style="flex:1;padding:9px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Archive…</button>
+                <button onClick="{{ trashSel }}" style="flex:1.2;padding:9px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s, background .18s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow);background:rgba(166,61,46,.05)" style-active="transform:scale(.95)">Move to Trash…</button>
+                <button onClick="{{ archiveSel }}" style="flex:1;padding:9px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Archive…</button>
               </div>
             </div>
           </sc-if>
@@ -198,11 +199,11 @@
             <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:6px">Where to look</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;background:var(--chip);border-radius:var(--radius-sm);padding:2px;margin-bottom:6px;position:relative">
               <div style="{{ scopeThumbS }}"></div>
-              <button onClick="{{ scopeInbox }}" style="{{ scopeInboxS }}">Inbox</button>
-              <button onClick="{{ scopeAll }}" style="{{ scopeAllS }}">All mail</button>
+              <button onClick="{{ scopeInbox }}" style="{{ scopeInboxS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">Inbox</button>
+              <button onClick="{{ scopeAll }}" style="{{ scopeAllS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">All mail</button>
             </div>
             <div style="font-size:11px;color:var(--faint);margin-bottom:12px">{{ scopeCaption }}</div>
-            <button onClick="{{ scan }}" style="width:100%;padding:11px;border-radius:var(--radius-sm);border:none;background:var(--accent-grad,var(--accent));color:var(--accent-ink,#fff);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer" style-hover="filter:brightness(1.06)">Scan {{ scopeLabel }}</button>
+            <button onClick="{{ scan }}" onMouseEnter="{{ scanGlowIn }}" onMouseLeave="{{ scanGlowOut }}" style="width:100%;position:relative;overflow:hidden;padding:11px;border-radius:var(--radius-sm);border:none;background:var(--accent-grad,var(--accent));color:var(--accent-ink,#fff);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s ease" style-hover="box-shadow:0 4px 12px rgba(43,95,174,.3)" style-active="transform:scale(.96);box-shadow:0 1px 3px rgba(43,95,174,.3)"><shader-glow paused="{{ scanGlowPaused }}" style="position:absolute;inset:0;pointer-events:none"></shader-glow><span style="position:relative;text-shadow:0 1px 2px rgba(20,40,80,.18)">Scan {{ scopeLabel }}</span></button>
             
           </div>
         </sc-if>
@@ -221,21 +222,21 @@
           <div style="display:flex;align-items:baseline;gap:6px;margin:0 2px 2px">
             <span style="font-size:15px;font-weight:700;letter-spacing:-0.01em;font-family:var(--num,inherit)">{{ sndHeadCount }} senders</span>
             <span style="font-size:12px;color:var(--sub)">· {{ sndHeadSize }}</span>
-            <button onClick="{{ scan }}" style="margin-left:auto;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:3px 10px;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Rescan</button>
+            <button onClick="{{ scan }}" style="margin-left:auto;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:3px 10px;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Rescan</button>
           </div>
           <div style="font-size:11px;color:var(--faint);margin:0 2px 10px">Scanned 22,654 emails in {{ scopeLabel }} · just now</div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 4px">
-            <button onClick="{{ tOld1y }}" style="{{ fOld1yS }}">Older than 1 year</button>
-            <button onClick="{{ tOld6m }}" style="{{ fOld6mS }}">Older than 6 months</button>
-            <button onClick="{{ tUnread }}" style="{{ fUnreadS }}">Unread only</button>
-            <button onClick="{{ tBig }}" style="{{ fBigS }}">Larger than 5 MB</button>
+            <button onClick="{{ tOld1y }}" style="{{ fOld1yS }}" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Older than 1 year</button>
+            <button onClick="{{ tOld6m }}" style="{{ fOld6mS }}" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Older than 6 months</button>
+            <button onClick="{{ tUnread }}" style="{{ fUnreadS }}" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Unread only</button>
+            <button onClick="{{ tBig }}" style="{{ fBigS }}" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Larger than 5 MB</button>
           </div>
           <div style="font-size:11px;color:var(--faint);margin:0 2px 10px">Applied instantly to the last scan — no rescan needed.</div>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;background:var(--chip);border-radius:var(--radius-sm);padding:2px;margin-bottom:6px;position:relative">
             <div style="{{ showThumbS }}"></div>
-            <button onClick="{{ showSubs }}" style="{{ showSubsS }}">Subscriptions</button>
-            <button onClick="{{ showNon }}" style="{{ showNonS }}">Everything else</button>
+            <button onClick="{{ showSubs }}" style="{{ showSubsS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">Subscriptions</button>
+            <button onClick="{{ showNon }}" style="{{ showNonS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">Everything else</button>
           </div>
           <div style="font-size:11px;color:var(--faint);margin:0 2px 10px;line-height:1.6">
             <div>Subscriptions: {{ subsLine }}</div>
@@ -244,7 +245,7 @@
 
           <sc-if value="{{ showingSubs }}" hint-placeholder-val="{{ false }}">
             <sc-if value="{{ subsRemain }}" hint-placeholder-val="{{ false }}">
-              <button onClick="{{ unsubAll }}" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;margin-bottom:12px" style-hover="filter:brightness(.97)">Unsub &amp; delete all subscriptions ({{ subsCount }} · {{ subsSize }})…</button>
+              <button onClick="{{ unsubAll }}" style="width:100%;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;margin-bottom:12px;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s, background .18s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow);background:rgba(166,61,46,.05)" style-active="transform:scale(.95)">Unsub &amp; delete all subscriptions ({{ subsCount }} · {{ subsSize }})…</button>
             </sc-if>
           </sc-if>
 
@@ -257,8 +258,8 @@
             </button>
             <div style="margin-left:auto;display:flex;gap:2px;background:var(--chip);border-radius:999px;padding:2px;position:relative">
               <div style="{{ sortThumbS }}"></div>
-              <button onClick="{{ sortSSize }}" style="{{ sortSSizeS }}">Size</button>
-              <button onClick="{{ sortSCount }}" style="{{ sortSCountS }}">Count</button>
+              <button onClick="{{ sortSSize }}" style="{{ sortSSizeS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">Size</button>
+              <button onClick="{{ sortSCount }}" style="{{ sortSCountS }}" style-hover="color:var(--ink)" style-active="transform:scale(.92)">Count</button>
             </div>
           </div>
 
@@ -268,7 +269,7 @@
                 <div style="position:absolute;top:-4px;bottom:-4px;left:50%;width:2px;margin-left:-1px;background:var(--line)"></div>
                 <div style="position:relative;width:12px;height:12px;border-radius:50%;box-sizing:border-box;border:2px solid {{ s.beadBorder }};background:{{ s.beadBg }};transition:background .12s,border-color .12s"></div>
               </div>
-              <div onClick="{{ s.toggle }}" style="flex:1;min-width:0;cursor:pointer;padding:10px 12px;border-radius:var(--radius);border:1px solid {{ s.border }};background:{{ s.bg }};box-shadow:var(--shadow);transition:background .12s">
+              <div onClick="{{ s.toggle }}" style="flex:1;min-width:0;cursor:pointer;padding:10px 12px;border-radius:var(--radius);border:1px solid {{ s.border }};background:{{ s.bg }};box-shadow:var(--shadow);transition:transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .25s, background .15s, border-color .15s" style-hover="transform:translateY(-2px);box-shadow:0 6px 16px rgba(40,35,25,.12)">
                 <div style="display:flex;align-items:flex-start;gap:8px">
                   <div style="min-width:0;flex:1">
                     <div style="font-weight:600;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.name }}</div>
@@ -289,9 +290,9 @@
                 </sc-if>
                 <div style="display:flex;gap:6px;margin-top:4px">
                   <sc-if value="{{ s.canUnsub }}" hint-placeholder-val="{{ false }}">
-                    <button onClick="{{ s.unsub }}" style="padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Unsubscribe…</button>
+                    <button onClick="{{ s.unsub }}" style="padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Unsubscribe…</button>
                   </sc-if>
-                  <button onClick="{{ s.del }}" style="padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Delete all…</button>
+                  <button onClick="{{ s.del }}" style="padding:6px 10px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s, background .18s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow);background:rgba(166,61,46,.05)" style-active="transform:scale(.95)">Delete all…</button>
                 </div>
               </div>
             </div>
@@ -310,17 +311,17 @@
               </div>
               <div style="display:flex;gap:6px">
                 <sc-if value="{{ bulkSHasSubs }}" hint-placeholder-val="{{ false }}">
-                  <button onClick="{{ unsubSelS }}" style="flex:1;padding:9px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Unsub…</button>
+                  <button onClick="{{ unsubSelS }}" style="flex:1;padding:9px 6px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Unsub…</button>
                 </sc-if>
-                <button onClick="{{ delSelS }}" style="flex:1;padding:9px 6px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Delete…</button>
+                <button onClick="{{ delSelS }}" style="flex:1;padding:9px 6px;border-radius:var(--radius-sm);border:1px solid var(--dbtn-border,transparent);background:var(--dbtn-bg);color:var(--dbtn-ink);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s, background .18s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow);background:rgba(166,61,46,.05)" style-active="transform:scale(.95)">Delete…</button>
                 <sc-if value="{{ bulkSHasSubs }}" hint-placeholder-val="{{ false }}">
-                  <button onClick="{{ unsubDelSelS }}" style="flex:1.4;padding:9px 6px;border-radius:var(--radius-sm);border:none;background:var(--danger,#b3402f);color:#fff;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer" style-hover="filter:brightness(1.08)">Unsub &amp; delete…</button>
+                  <button onClick="{{ unsubDelSelS }}" style="flex:1.4;padding:9px 6px;border-radius:var(--radius-sm);border:none;background:var(--danger,#b3402f);color:#fff;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer" style-hover="transform:translateY(-1.5px);box-shadow:0 5px 14px rgba(166,61,46,.35)" style-active="transform:scale(.96)">Unsub &amp; delete…</button>
                 </sc-if>
               </div>
             </div>
           </sc-if>
         </sc-if>
-      </div><div style="font-size:11px;color:var(--faint);text-align:center;margin-top:8px">Scanning reads message headers locally — nothing changes yet.</div>
+      </div><div style="font-size:11px;color:var(--faint);text-align:center;margin-top:8px">Scans directly from your emails</div>
     </sc-if>
   </div>
 
@@ -346,8 +347,8 @@
       <div style="font-weight:700;font-size:14px;letter-spacing:-0.01em;margin-bottom:6px">{{ confirmTitle }}</div>
       <div style="font-size:12px;color:var(--sub);line-height:1.55;margin-bottom:14px">{{ confirmBody }}</div>
       <div style="display:flex;gap:8px">
-        <button onClick="{{ confirmNo }}" style="flex:1;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer" style-hover="filter:brightness(.97)">Cancel</button>
-        <button onClick="{{ confirmYes }}" style="{{ confirmCtaS }}" style-hover="filter:brightness(1.08)">{{ confirmCta }}</button>
+        <button onClick="{{ confirmNo }}" style="flex:1;padding:10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s" style-hover="transform:translateY(-1.5px);box-shadow:var(--shadow)" style-active="transform:scale(.95)">Cancel</button>
+        <button onClick="{{ confirmYes }}" style="{{ confirmCtaS }}" style-hover="transform:translateY(-1.5px);box-shadow:0 5px 14px rgba(20,20,20,.2)" style-active="transform:scale(.96)">{{ confirmCta }}</button>
       </div>
     </div>
   </sc-if>
@@ -679,10 +680,10 @@ class Component extends DCLogic {
 
   renderVals() {
     const st = this.state;
-    const seg = a => 'flex:1;position:relative;z-index:1;text-align:center;padding:7px 4px;border-radius:calc(var(--radius-sm,8px) - 2px);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border:none;background:transparent;color:' + (a ? 'var(--ink)' : 'var(--sub)') + ';transition:color .18s ease';
-    const pill = a => 'border:none;position:relative;z-index:1;border-radius:999px;width:56px;padding:3px 0;text-align:center;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;background:transparent;color:' + (a ? 'var(--ink)' : 'var(--sub)') + ';transition:color .18s ease';
-    const thumb = second => 'position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 3px);border-radius:calc(var(--radius-sm,8px) - 2px);background:var(--card,#fffefb);box-shadow:var(--shadow);transition:transform .22s cubic-bezier(.4,0,.2,1);transform:translateX(' + (second ? 'calc(100% + 2px)' : '0') + ')';
-    const pillThumb = second => 'position:absolute;top:2px;bottom:2px;left:2px;width:56px;border-radius:999px;background:var(--card,#fffefb);box-shadow:var(--shadow);transition:transform .22s cubic-bezier(.4,0,.2,1);transform:translateX(' + (second ? '58px' : '0') + ')';
+    const seg = a => 'flex:1;position:relative;z-index:1;text-align:center;padding:7px 4px;border-radius:calc(var(--radius-sm,8px) - 2px);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border:none;background:transparent;color:' + (a ? 'var(--ink)' : 'var(--sub)') + ';transition:color .26s ease, transform .2s cubic-bezier(.34,1.56,.64,1)';
+    const pill = a => 'border:none;position:relative;z-index:1;border-radius:999px;width:56px;padding:3px 0;text-align:center;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;background:transparent;color:' + (a ? 'var(--ink)' : 'var(--sub)') + ';transition:color .26s ease, transform .2s cubic-bezier(.34,1.56,.64,1)';
+    const thumb = second => 'position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 3px);border-radius:calc(var(--radius-sm,8px) - 2px);background:var(--card,#fffefb);box-shadow:var(--shadow);transition:transform .34s cubic-bezier(.22,1,.36,1);transform:translateX(' + (second ? 'calc(100% + 2px)' : '0') + ')';
+    const pillThumb = second => 'position:absolute;top:2px;bottom:2px;left:2px;width:56px;border-radius:999px;background:var(--card,#fffefb);box-shadow:var(--shadow);transition:transform .34s cubic-bezier(.22,1,.36,1);transform:translateX(' + (second ? '58px' : '0') + ')';
 
     const visM = this._visM();
     const msgs = visM.map((m, i) => {
@@ -748,7 +749,7 @@ class Component extends DCLogic {
     const selSmb = selS.reduce((a, s) => a + s.mb, 0);
     const allS = visS.length > 0 && visS.every(s => st.sndSel[s.id]);
     const fmt = mb => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb.toFixed(1) + ' MB';
-    const chip = a => 'border-radius:999px;padding:5px 11px;font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid ' + (a ? 'var(--accent)' : 'var(--line)') + ';background:' + (a ? 'var(--sel,var(--chip))' : 'var(--card)') + ';color:' + (a ? 'var(--accent)' : 'var(--sub)');
+    const chip = a => 'border-radius:999px;padding:5px 11px;font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;border:1px solid ' + (a ? 'var(--accent)' : 'var(--line)') + ';background:' + (a ? 'var(--sel,var(--chip))' : 'var(--card)') + ';color:' + (a ? 'var(--accent)' : 'var(--sub)') + ';transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .2s, border-color .18s, background .18s, color .18s';
     const tF = k => () => this.setState({ sndFilters: { ...this.state.sndFilters, [k]: !this.state.sndFilters[k] } });
     const filtAll = st.senders.filter(s => this._passF(s));
     const subsAll = filtAll.filter(s => s.sub);
@@ -774,6 +775,12 @@ class Component extends DCLogic {
       goSenders: () => this.setState({ tab: 'senders' }),
       tabSearchS: seg(st.tab === 'search'), tabSendersS: seg(st.tab === 'senders'),
       tabThumbS: thumb(st.tab === 'senders'),
+      searchGlowIn: () => this.setState({ hovP: 'search' }),
+      searchGlowOut: () => this.setState(s => ({ hovP: s.hovP === 'search' ? null : s.hovP })),
+      scanGlowIn: () => this.setState({ hovP: 'scan' }),
+      scanGlowOut: () => this.setState(s => ({ hovP: s.hovP === 'scan' ? null : s.hovP })),
+      searchGlowPaused: st.hovP === 'search' ? 'false' : 'true',
+      scanGlowPaused: st.hovP === 'scan' ? 'false' : 'true',
 
       sForm: st.sPhase === 'form', sBusy: st.sPhase === 'busy', sResults: st.sPhase === 'results',
       fSize: st.fSize, fAge: st.fAge, fRead: st.fRead, fFrom: st.fFrom,
