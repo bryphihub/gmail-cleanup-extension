@@ -7,3 +7,13 @@ node_modules/
 # Editor folders
 .vscode/
 .idea/
+
+# Private extension signing key — pins this extension's Chrome ID so it stays
+# stable no matter where the folder is moved. The public half is safe to keep
+# in manifest.json's "key" field; this private half never needs to leave your
+# machine unless you're publishing this exact ID to the Chrome Web Store.
+extension-private-key.pem
+
+# Local Claude Code tooling config (installed skills, etc.) — not part of
+# the extension itself, so it doesn't belong in the repo.
+.claude/

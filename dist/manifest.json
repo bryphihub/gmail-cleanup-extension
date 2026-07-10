@@ -5,6 +5,8 @@
   "version": "0.1.0",
   "description": "Find and clean up storage-heavy emails in your Gmail inbox.",
 
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0j/bRewQ6heBRjbn6l9VDZ+w0oUH/5X9nrc/yJMRxR99Bb6i4cKD8tOY/2qZ37WjpFiAeAFUoTqfrL6JTwEPkh9PUvKdlDCdWlknonDRbw6LslU1Egu9BIu9cqOiViQamiHdiclfCwRJmTUp2VoPVozfZjbpgpAmHaQ/zaI3MP6W/vsMtwiqzIiG+fhdT/AFcA+TADscbKzJjLipWgknFJwzjVLUqczHpEGQN2KbY2oxH0t0Y0QLLvOPGbJBG3/UwCH84tJ335/fFhpOd2/yKKDUTChq+JZqWcki7MJqb8+PX5Mi6+LpJ3e7dlZolbpwCpvUmiOlU5hAjzhBiv49iwIDAQAB",
+
   "action": {
     "default_icon": {
       "16": "assets/icons/icon16.png",
@@ -42,7 +44,7 @@
   "host_permissions": ["https://*/*", "http://*/*"],
 
   "oauth2": {
-    "client_id": "574216421018-db6hnmd35iu34d88uk32ab5t65pb73hb.apps.googleusercontent.com",
+    "client_id": "574216421018-1fbrn6m6dkueq7bqi19urkl7ila9osd1.apps.googleusercontent.com",
     "scopes": ["https://www.googleapis.com/auth/gmail.modify"]
   }
 }
