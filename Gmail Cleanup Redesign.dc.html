@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+body{margin:0;background:#edebe6;font-family:system-ui,sans-serif}
+a{color:#3a5f52}a:hover{color:#27443a}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}
+.dv-opts{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55);max-width:400px}
+.dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+.dv-opt:target .dv-oid{background:#3a5f52;color:#fff}
+.dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+</style>
+</helmet>
+<section class="dv-turn" id="t7">
+  <div class="dv-thd"><a class="dv-tid" href="#t7">7</a><span class="dv-tname"><a href="#6a">6a</a> + a soft animated shader-mesh gradient (shadergradient-style, WebGL) on the Scan button, in the same blue family.</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="7a" data-screen-label="Option 7a Shader on hover">
+      <div class="dv-olabel"><a class="dv-oid" href="#7a">7a</a>Shader on hover — no lift; the gradient sits still until you hover, then flows (eases in/out smoothly). Squash-on-press kept.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="shaderhover" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="7b" data-screen-label="Option 7b Shader always on">
+      <div class="dv-olabel"><a class="dv-oid" href="#7b">7b</a>Shader always flowing — gradient animates continuously; <a href="#4a">4a</a> lift-on-hover and squash-on-press kept.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="shaderalways" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "apply <a class="dv-oid" href="#7a">7a</a>" · "slower / softer flow" · "shader on the danger confirm too"</p>
+</section>
+<section class="dv-turn" id="t6">
+  <div class="dv-thd"><a class="dv-tid" href="#t6">6</a><span class="dv-tname"><a href="#5b">5b</a> with the toggle glide faster (.45s → .34s thumb).</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="6a" data-screen-label="Option 6a Faster glide toggles + Springy buttons">
+      <div class="dv-olabel"><a class="dv-oid" href="#6a">6a</a>Same as <a href="#5b">5b</a> — silky glide thumb, subtle sheen, <a href="#4a">4a</a> lift/squash buttons — but the thumb travels ~25% quicker.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="glidespringfast" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "apply <a class="dv-oid" href="#6a">6a</a> to the panel" · "even faster" · "back to <a class="dv-oid" href="#5b">5b</a> speed"</p>
+</section>
+<section class="dv-turn" id="t5">
+  <div class="dv-thd"><a class="dv-tid" href="#t5">5</a><span class="dv-tname">Hybrid mixes — <a href="#4a">4a</a>'s lift-on-hover / squash-on-press buttons paired with two different toggle feels.</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="5a" data-screen-label="Option 5a Tactile toggles + Springy buttons">
+      <div class="dv-olabel"><a class="dv-oid" href="#5a">5a</a><a href="#4c">4c</a> toggles + <a href="#4a">4a</a> buttons — fast mechanical thumb snap; everything else lifts on hover and squashes on press.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="tacspring" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="5b" data-screen-label="Option 5b Glide toggles + Springy buttons">
+      <div class="dv-olabel"><a class="dv-oid" href="#5b">5b</a><a href="#4d">4d</a> toggles + <a href="#4a">4a</a> buttons — silky gliding thumb; sheen on Scan toned way down (fainter, slower, smoother sweep).</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="glidespring" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "apply <a class="dv-oid" href="#5a">5a</a> to the panel" · "kill the sheen entirely on <a class="dv-oid" href="#5b">5b</a>" · "slower thumb on <a class="dv-oid" href="#5a">5a</a>"</p>
+</section>
+<section class="dv-turn" id="t4">
+  <div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">Motion explorations, fully interactive — same five personalities as turn <a href="#t3">3</a> but every button now responds to hover, press &amp; release (chips toggle, primary shows a scanning state).</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="4a" data-screen-label="Option 4a Springy interactive">
+      <div class="dv-olabel"><a class="dv-oid" href="#4a">4a</a>Springy — bouncy thumb overshoot; buttons lift on hover, squash on press.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="springy" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="4b" data-screen-label="Option 4b Dissolve interactive">
+      <div class="dv-olabel"><a class="dv-oid" href="#4b">4b</a>Dissolve — no thumb; states cross-fade, hovers tint softly, presses dim. Calmest.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="dissolve" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="4c" data-screen-label="Option 4c Tactile interactive">
+      <div class="dv-olabel"><a class="dv-oid" href="#4c">4c</a>Tactile — buttons physically depress with inset shadow on press, like real keys.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="tactile" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="4d" data-screen-label="Option 4d Glide interactive">
+      <div class="dv-olabel"><a class="dv-oid" href="#4d">4d</a>Glide — long silky easing, sheen sweep on primary, cards nudge sideways. Most premium.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="glide" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="4e" data-screen-label="Option 4e Snap interactive">
+      <div class="dv-olabel"><a class="dv-oid" href="#4e">4e</a>Snap — near-instant (~70–110ms), crisp scale ticks on press. Most utilitarian.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler2" motion="snap" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "apply <a class="dv-oid" href="#4a">4a</a> to the panel" · "mix <a class="dv-oid" href="#4a">4a</a> toggles with <a class="dv-oid" href="#4c">4c</a> buttons" · "slower / faster"</p>
+</section>
+<section class="dv-turn" id="t3">
+  <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Motion explorations — five animation personalities for toggles, buttons, hovers &amp; selection (interactive, on <a href="#2a">2a</a>'s Porcelain Blue). Pick one and I'll apply it across the full panel.</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="3a" data-screen-label="Option 3a Springy">
+      <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Springy — playful overshoot on the sliding thumb, buttons lift on hover and squash on press. Most "fun to fidget with".</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler" motion="springy" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="3b" data-screen-label="Option 3b Dissolve">
+      <div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Dissolve — no sliding thumb; the active choice cross-fades in place, hovers tint softly. Calmest, least motion.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler" motion="dissolve" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="3c" data-screen-label="Option 3c Tactile">
+      <div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Tactile — fast thumb, buttons physically depress with an inset shadow on press. Feels like real keys.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler" motion="tactile" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="3d" data-screen-label="Option 3d Glide">
+      <div class="dv-olabel"><a class="dv-oid" href="#3d">3d</a>Glide — long silky ease-out everywhere, a subtle sheen sweeps the primary button, cards nudge sideways on hover. Most "premium".</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler" motion="glide" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="3e" data-screen-label="Option 3e Snap">
+      <div class="dv-olabel"><a class="dv-oid" href="#3e">3e</a>Snap — near-instant everything (~70–110ms), crisp scale ticks on press. Feels the fastest, most utilitarian.</div>
+      <div class="dv-card" style="width:400px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="MotionSampler" motion="snap" hint-size="400px,560px" style="display:block;width:400px"></dc-import>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "apply <a class="dv-oid" href="#3a">3a</a> to the panel" · "mix <a class="dv-oid" href="#3a">3a</a> toggles with <a class="dv-oid" href="#3c">3c</a> buttons" · "slower / faster"</p>
+</section>
+<section class="dv-turn" id="t2">
+  <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Chosen: <a href="#1a">1a</a> Porcelain, sage swapped for a clean blue ombre</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="2a" data-screen-label="Option 2a Porcelain Blue">
+      <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Porcelain Blue — same warm paper neutrals and quiet destructive actions as <a href="#1a">1a</a>; accent is now a light-to-deep blue gradient on filled surfaces, solid blue for text and borders.</div>
+      <div class="dv-card" style="width:400px;height:760px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#e9eff8;--accent:#2f6bc4;--accent-grad:linear-gradient(165deg,#5ba3e9 0%,#2b5fae 100%);--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--radius:12px;--radius-sm:8px;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="CleanupPanel" hint-size="400px,760px" undo-seconds="{{ undoSeconds }}" show-size-bars="{{ showSizeBars }}" style="display:block;width:400px;height:760px"></dc-import>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "deeper navy end on the ombre" · "cooler neutrals to match the blue" · "make <a class="dv-oid" href="#2a">2a</a> the standalone final"</p>
+</section>
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Three directions — fully interactive: switch tabs, run a search or scan, drag the rail, confirm, undo</span></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="1a" data-screen-label="Option 1a Porcelain">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Porcelain — warm paper neutrals, sage accent. Destructive actions stay quiet (outlined, red text) until the confirmation step, which is the only solid red in the UI.</div>
+      <div class="dv-card" style="width:400px;height:760px;--bg:#f6f5f1;--card:#fffefb;--ink:#26231e;--sub:#6f6a60;--faint:#a8a294;--line:#e6e2d8;--chip:#edeae2;--sel:#eaefe9;--accent:#47685b;--accent-ink:#ffffff;--danger:#a63d2e;--dbtn-bg:transparent;--dbtn-ink:#a63d2e;--dbtn-border:#ddc5bd;--radius:12px;--radius-sm:8px;--shadow:0 1px 2px rgba(40,35,25,.06);--font:'Avenir Next','Seravek',system-ui,sans-serif">
+        <dc-import name="CleanupPanel" hint-size="400px,760px" undo-seconds="{{ undoSeconds }}" show-size-bars="{{ showSizeBars }}" style="display:block;width:400px;height:760px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1b" data-screen-label="Option 1b Glacier">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Glacier — cool blue-grays with soft depth, deep-navy primary (closest to your inspiration shots). Destructive actions as tinted red chips; solid red only at confirm.</div>
+      <div class="dv-card" style="width:400px;height:760px;--bg:#edf1f5;--card:#fcfdfe;--ink:#1e2a38;--sub:#5d6c7c;--faint:#93a1b0;--line:#dce4ec;--chip:#e3e9f0;--sel:#e4edf6;--accent:#2b4a6f;--accent-ink:#ffffff;--danger:#b23b36;--dbtn-bg:#f7e8e7;--dbtn-ink:#a33430;--dbtn-border:transparent;--radius:14px;--radius-sm:10px;--shadow:0 2px 8px rgba(30,50,80,.07);--font:system-ui,sans-serif">
+        <dc-import name="CleanupPanel" hint-size="400px,760px" undo-seconds="{{ undoSeconds }}" show-size-bars="{{ showSizeBars }}" style="display:block;width:400px;height:760px"></dc-import>
+      </div>
+    </div>
+
+    <div class="dv-opt" id="1c" data-screen-label="Option 1c Graphite">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Graphite — crisp white utility, near-black primary, mono numerals, tight radii. Red stays prominent and solid (a refined version of your current loudness).</div>
+      <div class="dv-card" style="width:400px;height:760px;--bg:#ffffff;--card:#fafafa;--ink:#141517;--sub:#5c5f63;--faint:#9a9da1;--line:#e5e5e5;--chip:#f1f1f1;--sel:#ededed;--accent:#141517;--accent-ink:#ffffff;--danger:#d63c2f;--dbtn-bg:#d63c2f;--dbtn-ink:#ffffff;--dbtn-border:transparent;--radius:8px;--radius-sm:5px;--shadow:0 1px 2px rgba(0,0,0,.07);--font:'Helvetica Neue',Arial,sans-serif;--num:'SF Mono',ui-monospace,monospace">
+        <dc-import name="CleanupPanel" hint-size="400px,760px" undo-seconds="{{ undoSeconds }}" show-size-bars="{{ showSizeBars }}" style="display:block;width:400px;height:760px"></dc-import>
+      </div>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "go with <a class="dv-oid" href="#1a">1a</a> but keep <a class="dv-oid" href="#1c" style="position: relative">1c</a>'s solid red buttons" · "warmer accent on <a class="dv-oid" href="#1b">1b</a>" · "show me a dark variant"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;undoSeconds&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:10,&quot;min&quot;:3,&quot;max&quot;:15,&quot;unit&quot;:&quot;s&quot;,&quot;section&quot;:&quot;Behavior&quot;},&quot;showSizeBars&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;section&quot;:&quot;Behavior&quot;}}"></script>
+</body>
+</html>
