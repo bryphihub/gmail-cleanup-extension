@@ -1,29 +1,27 @@
-// SendersTab.jsx — the merged "Senders" tab. Replaces the old separate
-// Subscriptions and Top Senders tabs, which were showing a lot of the same
-// people (most subscriptions are also top senders). One scan now covers both
-// jobs: it reads every message in the chosen scope (Inbox or All mail) and
-// tags each one as a "subscription" if it carries a List-Unsubscribe header —
-// the same signal the old Subscriptions tab used, just recorded per message
-// instead of used to decide what to fetch in the first place.
+// SendersTab.jsx — the merged "Top Senders" tab. One scan reads every message
+// in the chosen scope (Inbox or All mail) and tags each one as a
+// "subscription" if it carries a List-Unsubscribe header; filters, the
+// Subscriptions/Everything-else toggle, and sorting all re-slice that same
+// scanned data instantly with no new API calls. Only changing the scope
+// requires scanning again.
 //
-// Filters (age, unread, size) and the "Show" toggle (Subscriptions /
-// Non-subscriptions) are pure client-side — they re-slice the same scanned
-// data instantly, no new API calls. Only changing "Where to look" (scope)
-// requires clicking Scan/Rescan again, since that changes which messages were
-// ever fetched in the first place.
+// The tab moves through three phases, per the design:
+//   'form'    — "Where to look" (Inbox / All mail) + the Scan button
+//   'busy'    — the "Scanning…" card with a progress bar
+//   'results' — sender count header + Rescan, filter chips, the
+//               Subscriptions/Everything-else switch, and the sender cards
+//               with the drag-to-select rail
 //
-// The full scan (every message record, not just the sender totals) is saved
-// to chrome.storage.local after every scan and restored on mount, so opening
-// the panel in a new session shows real, actionable results right away
-// instead of just a "last scanned" timestamp with nothing behind it. This
-// needs the "unlimitedStorage" permission in manifest.json — a large "All
-// mail" scan of a big inbox can be several megabytes of JSON, past what
-// storage.local normally allows.
+// The full scan is saved to chrome.storage.local after every scan and
+// restored on mount, so opening the panel in a new session lands straight on
+// real results. This needs the "unlimitedStorage" permission in
+// manifest.json — a large "All mail" scan can be several megabytes of JSON.
 
 import { useState, useRef, useMemo, useEffect } from 'react'
 import { getToken, GmailAuthError } from './auth.js'
 import { scanSenders, trashAllFromSender, attemptUnsubscribe, parseUnsubscribeUrl } from './gmail.js'
 import { formatSize, formatTimeAgo, dragScrollSpeed } from './utils.js'
+import { Segmented, ConfirmSheet, BusyCard, Rail, BulkBar } from './ui.jsx'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const FIVE_MB = 5 * 1024 * 1024
@@ -43,19 +41,17 @@ const FILTERS = [
 // delete so App.jsx can pop up a shared "Undo" toast at the bottom of the
 // panel — the Undo control itself lives there, not in this tab.
 export default function SendersTab({ onAuthError, onAction }) {
-  // Every message from the last scan, unfiltered. This is the single source
-  // of truth — filters, the Show toggle, and sorting all derive from this
-  // without needing to touch the network again.
+  // Every message from the last scan, unfiltered — the single source of truth.
   const [rawMessages, setRawMessages] = useState([])
+
+  // Which of the three screens is showing (see the top-of-file comment).
+  const [zPhase, setZPhase] = useState('form')
 
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [progress, setProgress] = useState({ loaded: 0, total: 0 })
 
-  // Unix timestamp (ms) of the most recent completed scan, and which scope
-  // ('inbox' or 'all') it covered — shown next to "Last scanned" regardless
-  // of whether this session has scanned yet, since rawMessages (above) is
-  // restored from storage on mount too.
+  // When the most recent completed scan happened and which scope it covered.
   const [lastScanTime, setLastScanTime] = useState(null)
   const [lastScanScope, setLastScanScope] = useState(null)
 
@@ -80,30 +76,19 @@ export default function SendersTab({ onAuthError, onAction }) {
   const [dismissedSubs, setDismissedSubs] = useState(new Set())
 
   const [acting, setActing] = useState(null) // email currently being worked on
-  const [bulkConfirm, setBulkConfirm] = useState(false)
   const [bulkProgress, setBulkProgress] = useState({ loaded: 0, total: 0 })
   const [needsManualUnsub, setNeedsManualUnsub] = useState([])
 
-  // Manual multi-select — lets someone check off several senders (in either
-  // Subscriptions or Non-subscriptions view) and delete them all at once,
-  // separate from the "Unsub & Delete All Subscriptions" button above, which
-  // only ever touches subscriptions.
+  // Manual multi-select — checked senders (in either view) that the floating
+  // bulk bar acts on.
   const [selectedSenders, setSelectedSenders] = useState(new Set())
-  // Which bulk action (if any) is pending confirmation for the current
-  // selection. On Subscriptions this can be 'unsub', 'delete', or
-  // 'unsubDelete' — on Non-subscriptions only 'delete' is ever offered,
-  // since those senders have nothing to unsubscribe from.
-  const [selectedActionConfirm, setSelectedActionConfirm] = useState(null)
 
-  // Every destructive action on a row (Unsub, Delete all, Unsub & delete)
-  // asks for confirmation first instead of firing immediately on click — one
-  // stray click on a small button in a dense list shouldn't be able to
-  // unsubscribe from or delete mail from the wrong sender.
-  const [confirmAction, setConfirmAction] = useState(null) // { sender, type: 'unsub' | 'delete' | 'unsubDelete' }
+  // The pending confirmation sheet: null, or { title, body, cta, danger,
+  // onConfirm }. Every destructive action — single-row or bulk — goes
+  // through this before anything fires.
+  const [confirm, setConfirm] = useState(null)
 
-  // Shared by every catch block below: tells the difference between "your
-  // Gmail login is no longer valid" (show Reconnect above, via onAuthError)
-  // and every other kind of failure (just show the message as status text).
+  // Shared by every catch block below.
   function handleGmailError(err, prefix = 'Error: ') {
     if (err instanceof GmailAuthError) {
       onAuthError?.()
@@ -116,11 +101,8 @@ export default function SendersTab({ onAuthError, onAction }) {
   // Builds the function passed to App.jsx as `onAction`'s third argument —
   // it only runs once App.jsx has confirmed the Gmail-side untrash actually
   // succeeded, and puts the given raw message records back into rawMessages
-  // so the sender reappears in the list instead of Undo only working
-  // silently on Gmail's side. `emailsToUndismiss` additionally un-dismisses
-  // senders that were unsubscribed as part of the same action — the
-  // unsubscribe request itself can't be called back, but there's no reason
-  // to keep hiding a sender whose emails just came back to the list.
+  // so the sender reappears in the list. `emailsToUndismiss` additionally
+  // un-dismisses senders that were unsubscribed as part of the same action.
   function makeRestoreFn(records, emailsToUndismiss = []) {
     return () => {
       setRawMessages((prev) => {
@@ -142,25 +124,22 @@ export default function SendersTab({ onAuthError, onAction }) {
     }
   }
 
-  // Selection and any pending confirmation are scoped to whichever tab is
-  // active — clear both when switching tabs so a checkbox or confirmation
-  // left over from one view doesn't silently apply in the other.
+  // Selection and any pending confirmation are scoped to whichever view is
+  // active — clear both when switching so a leftover from one view doesn't
+  // silently apply in the other.
   useEffect(() => {
     setSelectedSenders(new Set())
-    setConfirmAction(null)
-    setSelectedActionConfirm(null)
+    setConfirm(null)
   }, [showMode])
+
   // Guards against the persist-effect below overwriting saved manual-unsub
   // data with an empty array before that data has finished loading from
-  // storage on mount (see the mount effect and the persist effect further
-  // down).
+  // storage on mount.
   const manualUnsubLoadedRef = useRef(false)
 
   const hasScannedRef = useRef(false)
-  // Points at the single scrollable container for the whole tab — header,
-  // filters, and the results list all scroll together as one unit, so
-  // scrolling down moves the filters out of view and gives the list more
-  // room, instead of the header staying pinned and only the list scrolling.
+  // The single scrollable container for the whole tab — header, filters, and
+  // the results list all scroll together as one unit.
   const scrollRef = useRef(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
 
@@ -172,11 +151,10 @@ export default function SendersTab({ onAuthError, onAction }) {
   }
 
   // --- Manual-unsubscribe panel: drag-to-resize ---
-  // rootRef measures the Senders tab's own height, so "1/3 of the panel"
-  // stays correct even if the extension window is resized. manualPanelHeight
-  // is null by default, meaning "size itself to fit its content, up to the
-  // 1/3 cap" (the original behavior) — once someone drags the handle, it
-  // switches to a fixed pixel height so the panel stays wherever they left it.
+  // rootRef measures the tab's own height so the "1/3 of the panel" cap on
+  // dragging stays correct if the window is resized. manualPanelHeight is
+  // null by default, meaning "size to fit content, up to the default cap" —
+  // once someone drags the handle, it becomes a fixed pixel height.
   const rootRef = useRef(null)
   const manualPanelRef = useRef(null)
   const [manualPanelHeight, setManualPanelHeight] = useState(null)
@@ -186,16 +164,11 @@ export default function SendersTab({ onAuthError, onAction }) {
     const startY = e.clientY
     const rootHeight = rootRef.current?.clientHeight || 0
     const maxHeight = rootHeight / 3
-    // A comfortable floor — enough to still see the heading and grab the
-    // handle again, without letting the panel disappear entirely (it's meant
-    // to stay reachable; hiding it completely is already handled separately
-    // by not rendering this panel at all when the queue is empty).
     const minHeight = 48
     const startHeight = manualPanelRef.current?.getBoundingClientRect().height || maxHeight
 
     function onMove(ev) {
-      // Handle sits at the top of the panel, so moving the mouse up (smaller
-      // clientY) should grow the panel, and moving it down should shrink it.
+      // Handle sits at the top of the panel, so moving the mouse up grows it.
       const delta = startY - ev.clientY
       const next = Math.max(minHeight, Math.min(maxHeight, startHeight + delta))
       setManualPanelHeight(next)
@@ -217,39 +190,31 @@ export default function SendersTab({ onAuthError, onAction }) {
 
   // On mount: restore the last scan — both when it happened and the actual
   // data — from storage, so there's something real to look at (and act on)
-  // immediately, not just a timestamp. Only if NO scan has ever been saved
-  // (first time this account has ever connected) do we auto-run a fresh one.
+  // immediately. With nothing saved, the tab starts on the scan form.
   useEffect(() => {
     chrome.storage.local.get(
       ['sendersLastScanTime', 'sendersLastScanScope', 'sendersLastScanData', 'sendersNeedsManualUnsub'],
       (r) => {
         if (r.sendersLastScanTime) {
           setLastScanTime(r.sendersLastScanTime)
-          setLastScanScope(r.sendersLastScanScope || 'all') // old data before this field existed was always an all-mail scan
+          const savedScope = r.sendersLastScanScope || 'all' // old data before this field existed was always an all-mail scan
+          setLastScanScope(savedScope)
+          setScope(savedScope)
           if (r.sendersLastScanData) {
             setRawMessages(r.sendersLastScanData)
             hasScannedRef.current = true
-            setStatus(
-              `Scanned ${r.sendersLastScanData.length.toLocaleString()} email${r.sendersLastScanData.length !== 1 ? 's' : ''}.`
-            )
+            setZPhase('results')
           }
           if (r.sendersNeedsManualUnsub) setNeedsManualUnsub(r.sendersNeedsManualUnsub)
-          manualUnsubLoadedRef.current = true
-        } else {
-          runScan('all')
-          manualUnsubLoadedRef.current = true
         }
+        manualUnsubLoadedRef.current = true
       }
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Keep the manual-unsubscribe queue in storage so it survives closing the
-  // panel or reloading the extension, the same way scan data does — without
-  // this, finishing a manual unsubscribe meant losing the rest of the list
-  // the moment the panel closed. Skipped until the mount effect above has
-  // finished loading (or confirmed there's nothing to load), so this doesn't
-  // fire with an empty array and wipe out saved data before it's restored.
+  // panel or reloading the extension, the same way scan data does.
   useEffect(() => {
     if (!manualUnsubLoadedRef.current) return
     chrome.storage.local.set({ sendersNeedsManualUnsub: needsManualUnsub }, () => {
@@ -261,10 +226,7 @@ export default function SendersTab({ onAuthError, onAction }) {
 
   // --- Scan ---
 
-  // Saves the full scan to storage.local so it survives closing the panel or
-  // reloading the extension. Fails silently (logs, doesn't throw) if it ever
-  // runs into a storage error — worst case, the in-memory results the user is
-  // currently looking at are unaffected, they just won't be there next time.
+  // Saves the full scan to storage.local so it survives closing the panel.
   function persistScan(messages, time, scanScope) {
     chrome.storage.local.set(
       { sendersLastScanData: messages, sendersLastScanTime: time, sendersLastScanScope: scanScope },
@@ -276,23 +238,19 @@ export default function SendersTab({ onAuthError, onAction }) {
     )
   }
 
-  // `targetScope` lets a caller (like the first-time auto-scan above) force a
-  // specific scope regardless of whatever the "Where to look" pills currently
-  // show — the pills get updated to match so the UI doesn't end up lying
-  // about what was actually scanned.
-  async function runScan(targetScope) {
-    const useScope = targetScope || scope
-    if (targetScope && targetScope !== scope) setScope(targetScope)
-
+  async function runScan() {
     setLoading(true)
+    setZPhase('busy')
     setStatus('')
     setRawMessages([])
+    setSelectedSenders(new Set())
+    setConfirm(null)
     setProgress({ loaded: 0, total: 0 })
     try {
       const token = await getToken(false)
       const results = await scanSenders(
         token,
-        { scope: useScope },
+        { scope },
         (loaded, total) => setProgress({ loaded, total }),
         (partial) => setRawMessages(partial)
       )
@@ -300,11 +258,12 @@ export default function SendersTab({ onAuthError, onAction }) {
       hasScannedRef.current = true
       const now = Date.now()
       setLastScanTime(now)
-      setLastScanScope(useScope)
-      persistScan(results, now, useScope)
-      setStatus(`Scanned ${results.length.toLocaleString()} email${results.length !== 1 ? 's' : ''}.`)
+      setLastScanScope(scope)
+      persistScan(results, now, scope)
+      setZPhase('results')
     } catch (err) {
       handleGmailError(err)
+      setZPhase(hasScannedRef.current ? 'results' : 'form')
     } finally {
       setLoading(false)
       setProgress({ loaded: 0, total: 0 })
@@ -314,10 +273,6 @@ export default function SendersTab({ onAuthError, onAction }) {
   // --- Aggregation — recomputed whenever the scan data or any filter changes,
   // but never touches the network. This is what makes filters feel instant. ---
 
-  // Every sender that survives the age/unread/size filters, regardless of the
-  // Show toggle — this is the shared base that both the sub and non-sub totals
-  // (below) and the currently-displayed list are derived from, so the two
-  // totals always reflect the same filters as whatever's on screen.
   const aggregatedSenders = useMemo(() => {
     const now = Date.now()
     const cutoff1y = now - 365 * DAY_MS
@@ -347,8 +302,6 @@ export default function SendersTab({ onAuthError, onAction }) {
     return [...map.values()].sort((a, b) => (sortBy === 'count' ? b.count - a.count : b.totalBytes - a.totalBytes))
   }, [rawMessages, activeFilters, sortBy, dismissedSubs])
 
-  // Split once so both the "Subscriptions vs non-subscriptions" comparison
-  // and the Show toggle can reuse the same two slices.
   const subSenders = useMemo(() => aggregatedSenders.filter((s) => s.isSubscription), [aggregatedSenders])
   const nonSubSenders = useMemo(() => aggregatedSenders.filter((s) => !s.isSubscription), [aggregatedSenders])
   const subTotalBytes = subSenders.reduce((sum, s) => sum + s.totalBytes, 0)
@@ -360,15 +313,18 @@ export default function SendersTab({ onAuthError, onAction }) {
     ? Math.max(...filteredSenders.map((s) => (sortBy === 'count' ? s.count : s.totalBytes)))
     : 1
 
-  // The bulk action only ever acts on subscriptions within whatever's
-  // currently displayed — it disappears on "Non-subscriptions" since there'd
-  // be nothing in view for it to act on there.
+  // The "Unsub & delete all subscriptions" button only ever acts on
+  // subscriptions currently visible under the active filters.
   const visibleSubs = filteredSenders.filter((s) => s.isSubscription)
   const visibleSubBytes = visibleSubs.reduce((sum, s) => sum + s.totalBytes, 0)
 
-  // Whether every sender currently on screen is checked — drives the
-  // "Select all" checkbox's own checked state.
   const allVisibleSelected = filteredSenders.length > 0 && filteredSenders.every((s) => selectedSenders.has(s.email))
+
+  const selectedList = filteredSenders.filter((s) => selectedSenders.has(s.email))
+  const selectedBytes = selectedList.reduce((sum, s) => sum + s.totalBytes, 0)
+  const selectedSubs = selectedList.filter((s) => s.isSubscription)
+
+  const scopeLabel = scope === 'inbox' ? 'Inbox' : 'All mail'
 
   // --- Actions ---
 
@@ -383,16 +339,13 @@ export default function SendersTab({ onAuthError, onAction }) {
   }
 
   // Updates rawMessages both in memory and in the cached scan, so a sender
-  // that's just been deleted doesn't reappear if the panel is reopened later
-  // before the next rescan.
+  // that's just been deleted doesn't reappear if the panel is reopened later.
   function pruneMessages(emailsToRemove) {
     setRawMessages((prev) => {
       const next = prev.filter((m) => !emailsToRemove.has(m.email))
       chrome.storage.local.set({ sendersLastScanData: next })
       return next
     })
-    // Also drop any of these senders from the current selection, so a
-    // deleted sender doesn't linger in the "Delete selected (N)" count.
     setSelectedSenders((prev) => {
       if (![...emailsToRemove].some((e) => prev.has(e))) return prev
       const next = new Set(prev)
@@ -405,17 +358,10 @@ export default function SendersTab({ onAuthError, onAction }) {
     setSelectedSenders(allVisibleSelected ? new Set() : new Set(filteredSenders.map((s) => s.email)))
   }
 
-  // --- Drag-select over the checkbox column ---
-  // The row itself already has its own click behavior (opens a Gmail search
-  // for that sender), so drag-select is scoped to the checkboxes specifically
-  // rather than the whole row — dragging down the checkbox column selects
-  // (or deselects) everything it passes over, without also firing off a
-  // string of Gmail searches. senderDragRef is a ref, not state, since only
-  // the actual selection changes below should cause a re-render.
+  // --- Drag-select on the rail ---
+  // senderDragRef is a ref, not state, since only the actual selection
+  // changes below should cause a re-render.
   const senderDragRef = useRef(null)
-  // Tracks the mouse's latest position during a drag, and the animation
-  // frame driving auto-scroll near the top/bottom edge of the scrollable
-  // region (scrollRef) — see startSenderDrag below.
   const senderDragPosRef = useRef({ x: 0, y: 0 })
   const senderDragScrollRafRef = useRef(null)
 
@@ -428,14 +374,10 @@ export default function SendersTab({ onAuthError, onAction }) {
     })
   }
 
-  // Runs every frame while a drag is active. Auto-scrolls the tab's main
-  // scroll region when the cursor is near its top or bottom edge, so a drag
-  // that starts on screen can still reach senders further up or down the
-  // list without the user having to let go, scroll manually, and start a new
-  // drag. After scrolling, re-checks whatever sender is now under the cursor
-  // (scrolling the list doesn't itself fire mouseenter — the pointer hasn't
-  // actually moved — so this is what keeps the selection extending smoothly
-  // as new rows scroll into view underneath a stationary mouse).
+  // Runs every frame while a drag is active. Auto-scrolls the tab's scroll
+  // region when the cursor is near its top or bottom edge, then re-checks
+  // whatever sender is now under the cursor so the selection keeps extending
+  // as new rows scroll in underneath a stationary mouse.
   function senderDragScrollTick() {
     const container = scrollRef.current
     if (container) {
@@ -480,23 +422,71 @@ export default function SendersTab({ onAuthError, onAction }) {
     applySenderSelection(email, senderDragRef.current)
   }
 
-  // Text shown in the inline confirmation box for a row's action buttons —
-  // one central place so the wording for Unsub / Delete all / Unsub & delete
-  // stays consistent.
-  function confirmActionText(type, sender) {
+  // --- Confirmations (all destructive actions route through the sheet) ---
+
+  function confirmDeleteSender(sender) {
     const who = sender.name || sender.email
-    if (type === 'unsub') return `Unsubscribe from ${who}?`
-    if (type === 'delete') return `Delete all emails from ${who}? They'll be moved to Trash.`
-    return `Unsubscribe from ${who} and delete all their emails? They'll be moved to Trash.`
+    setConfirm({
+      title: `Move ${sender.count.toLocaleString()} emails to Trash?`,
+      body: `All mail from ${who} moves to Trash for 30 days. You can undo this right after.`,
+      cta: 'Move to Trash',
+      danger: true,
+      onConfirm: () => { setConfirm(null); handleDeleteSender(sender) },
+    })
   }
 
-  function runConfirmedAction() {
-    if (!confirmAction) return
-    const { sender, type } = confirmAction
-    setConfirmAction(null)
-    if (type === 'unsub') handleUnsubscribe(sender)
-    else if (type === 'delete') handleDeleteSender(sender)
-    else handleUnsubAndDelete(sender)
+  function confirmUnsubSender(sender) {
+    const who = sender.name || sender.email
+    setConfirm({
+      title: `Unsubscribe from ${who}?`,
+      body: 'Sends an unsubscribe request on your behalf. Existing emails are kept. Unsubscribes usually cannot be undone.',
+      cta: 'Unsubscribe',
+      danger: false,
+      onConfirm: () => { setConfirm(null); handleUnsubscribe(sender) },
+    })
+  }
+
+  function confirmDeleteSelected() {
+    const cnt = selectedList.reduce((a, s) => a + s.count, 0)
+    setConfirm({
+      title: `Move ${cnt.toLocaleString()} emails to Trash?`,
+      body: `All mail from ${selectedList.length} selected sender${selectedList.length !== 1 ? 's' : ''} moves to Trash for 30 days. You can undo this right after.`,
+      cta: 'Move to Trash',
+      danger: true,
+      onConfirm: () => { setConfirm(null); bulkDelete(selectedList) },
+    })
+  }
+
+  function confirmUnsubSelected() {
+    setConfirm({
+      title: `Unsubscribe from ${selectedSubs.length} sender${selectedSubs.length !== 1 ? 's' : ''}?`,
+      body: 'Sends an unsubscribe request to each selected sender. Existing emails are kept. Unsubscribes usually cannot be undone.',
+      cta: 'Unsubscribe',
+      danger: false,
+      onConfirm: () => { setConfirm(null); bulkUnsubscribe(selectedSubs) },
+    })
+  }
+
+  function confirmUnsubDeleteSelected() {
+    const cnt = selectedSubs.reduce((a, s) => a + s.count, 0)
+    setConfirm({
+      title: `Unsub & delete ${selectedSubs.length} sender${selectedSubs.length !== 1 ? 's' : ''}?`,
+      body: `Sends an unsubscribe request to each selected sender and moves their ${cnt.toLocaleString()} emails to Trash. The deletion can be undone; the unsubscribes cannot.`,
+      cta: 'Unsub & delete',
+      danger: true,
+      onConfirm: () => { setConfirm(null); bulkUnsubAndDelete(selectedSubs) },
+    })
+  }
+
+  function confirmUnsubDeleteAll() {
+    const cnt = visibleSubs.reduce((a, s) => a + s.count, 0)
+    setConfirm({
+      title: 'Unsub & delete all subscriptions?',
+      body: `${visibleSubs.length} senders · ${cnt.toLocaleString()} emails · ~${formatSize(visibleSubBytes)}. Sends an unsubscribe request to every subscription shown and moves their mail to Trash. The deletion can be undone; the unsubscribes cannot.`,
+      cta: 'Unsub & delete all',
+      danger: true,
+      onConfirm: () => { setConfirm(null); bulkUnsubAndDelete(visibleSubs) },
+    })
   }
 
   async function handleUnsubscribe(sender) {
@@ -513,8 +503,7 @@ export default function SendersTab({ onAuthError, onAction }) {
   }
 
   // Trashes every email from this sender (globally, not just what's currently
-  // visible under the filters) — same as before, since the point is actually
-  // freeing up storage, not just the filtered subset.
+  // visible under the filters) — the point is actually freeing up storage.
   async function handleDeleteSender(sender) {
     setActing(sender.email)
     try {
@@ -531,37 +520,7 @@ export default function SendersTab({ onAuthError, onAction }) {
     }
   }
 
-  async function handleUnsubAndDelete(sender) {
-    dismissSender(sender.email)
-    setActing(sender.email)
-    try {
-      const token = await getToken(false)
-      const [unsubResult, trashResult] = await Promise.allSettled([
-        attemptUnsubscribe(token, sender.unsubHeader),
-        trashAllFromSender(token, sender.email),
-      ])
-      if (unsubResult.value === 'manual') setNeedsManualUnsub((prev) => [...prev, sender])
-      if (trashResult.status === 'fulfilled') {
-        const idSet = new Set(trashResult.value.ids)
-        const removedRecords = rawMessages.filter((m) => idSet.has(m.id))
-        pruneMessages(new Set([sender.email]))
-        onAction?.('trash', trashResult.value.ids, makeRestoreFn(removedRecords, [sender.email]))
-      } else {
-        pruneMessages(new Set([sender.email]))
-      }
-    } catch (err) {
-      handleGmailError(err)
-    } finally {
-      setActing(null)
-    }
-  }
-
   // --- Shared bulk operations ---
-  // These three do the actual work for any "act on a group of senders"
-  // button on this tab — both the "Unsub & Delete All Subscriptions" button
-  // (which always passes every visible subscription) and the per-selection
-  // Unsub / Delete / Unsub & delete buttons (which pass just the checked
-  // senders) call into the same code, so the two paths can't drift apart.
 
   async function bulkUnsubscribe(senders) {
     const emailSet = new Set(senders.map((s) => s.email))
@@ -570,9 +529,6 @@ export default function SendersTab({ onAuthError, onAction }) {
       chrome.storage.local.set({ dismissedSubs: [...next] })
       return next
     })
-    // Unsubscribing doesn't delete any messages, so rawMessages is untouched —
-    // but the senders are now dismissed and won't show up again, so drop them
-    // from the selection the same way pruneMessages does for deletions.
     setSelectedSenders((prev) => {
       if (![...emailSet].some((e) => prev.has(e))) return prev
       const next = new Set(prev)
@@ -624,7 +580,7 @@ export default function SendersTab({ onAuthError, onAction }) {
       const idSet = new Set(allTrashedIds)
       const removedRecords = rawMessages.filter((m) => idSet.has(m.id))
       pruneMessages(emailSet)
-      setStatus(`Deleted emails from ${senders.length} sender${senders.length !== 1 ? 's' : ''}.`)
+      setStatus('')
       onAction?.('trash', allTrashedIds, makeRestoreFn(removedRecords))
     } catch (err) {
       onAction?.('trash', allTrashedIds) // whatever succeeded before the error is still undoable
@@ -668,7 +624,7 @@ export default function SendersTab({ onAuthError, onAction }) {
       setStatus(
         manualQueue.length > 0
           ? `Done — ${automated} unsubscribed automatically, ${manualQueue.length} need manual action below.`
-          : `Unsubscribed and deleted emails from ${senders.length} sender${senders.length !== 1 ? 's' : ''}.`
+          : ''
       )
       if (manualQueue.length > 0) setNeedsManualUnsub((prev) => [...prev, ...manualQueue])
       onAction?.('trash', allTrashedIds, makeRestoreFn(removedRecords, [...emailSet]))
@@ -681,462 +637,291 @@ export default function SendersTab({ onAuthError, onAction }) {
     }
   }
 
-  // "Unsub & Delete All Subscriptions" button — always acts on every
-  // subscription currently visible under the active filters, regardless of
-  // what's checked.
-  function handleBulkUnsubAndDelete() {
-    setBulkConfirm(false)
-    bulkUnsubAndDelete(visibleSubs)
-  }
-
-  // The per-selection buttons — Unsub / Delete all / Unsub & delete, but
-  // acting on just the checked senders instead of everything in view. Only
-  // 'delete' is ever triggered from Non-subscriptions, since there's nothing
-  // to unsubscribe from there.
-  function runSelectedAction() {
-    const type = selectedActionConfirm
-    setSelectedActionConfirm(null)
-    const toProcess = filteredSenders.filter((s) => selectedSenders.has(s.email))
-    if (type === 'unsub') bulkUnsubscribe(toProcess)
-    else if (type === 'unsubDelete') bulkUnsubAndDelete(toProcess)
-    else bulkDelete(toProcess)
-  }
-
-  // Confirmation text for the per-selection buttons.
-  function selectedActionText(type) {
-    const n = selectedSenders.size
-    const s = n !== 1 ? 's' : ''
-    if (type === 'unsub') return `Unsubscribe from ${n} selected sender${s}?`
-    if (type === 'unsubDelete') return `Unsubscribe from ${n} selected sender${s} and delete all their emails? They'll be moved to Trash.`
-    return `Delete all emails from ${n} selected sender${s}? They'll be moved to Trash.`
-  }
-
   // --- UI ---
 
   return (
-    <div ref={rootRef} className="h-full flex flex-col min-h-0">
-      {/* Header, filters, and the results list share one scrollable region
-          that fills whatever space isn't taken by the manual-unsubscribe
-          panel below (if it's showing) — so scrolling down here moves the
-          filters out of view and gives the list more room, same as before. */}
+    <div ref={rootRef} className="h-full flex flex-col min-h-0 relative">
+      {/* Everything except the manual-unsubscribe panel scrolls as one unit.
+          Bottom padding leaves room for the floating bulk bar. */}
       <div className="relative flex-1 min-h-0">
-        <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto pr-1">
-        {/* Scan box — the rescan button and the Inbox/All mail choice live
-            inside one bordered, shaded box. Keeping this visually separate
-            from Filters/Show/results below makes clear that only what's in
-            this box triggers a new scan — nothing underneath it does. */}
-        <div className="mb-3 p-2 border border-gray-300 rounded-lg bg-gray-50">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs font-semibold text-gray-600">Senders</p>
-            <button
-              onClick={() => runScan()}
-              disabled={loading}
-              className="text-xs px-2 py-1 bg-gray-800 text-white rounded hover:bg-gray-900 disabled:opacity-50"
-            >
-              {loading ? 'Scanning...' : (hasScannedRef.current || lastScanTime) ? 'Rescan' : 'Scan'}
-            </button>
-          </div>
-
-          {/* Timestamp shown once we know when the last scan happened, even if
-              that was in a previous session and there's nothing on screen yet.
-              Includes which scope it covered, since Inbox and All mail scans
-              can turn up very different results. */}
-          {lastScanTime && !loading && (
-            <p className="text-xs text-gray-400 mb-2">
-              Last scanned {lastScanScope === 'inbox' ? 'Inbox' : 'All mail'} {formatTimeAgo(lastScanTime)}
-            </p>
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="h-full overflow-y-auto select-none"
+          style={{ padding: '12px 14px 96px' }}
+        >
+          {/* ============ FORM PHASE ============ */}
+          {zPhase === 'form' && (
+            <div style={{ animation: 'gcInR .22s ease' }}>
+              <p style={{ margin: '2px 2px 12px', fontSize: 12, color: 'var(--sub)' }}>
+                Scan your mailbox grouping mail by sender to spot subscriptions and repeat senders.
+              </p>
+              <div className="gc-card" style={{ padding: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--sub)', marginBottom: 6 }}>Where to look</div>
+                <div style={{ marginBottom: 6 }}>
+                  <Segmented
+                    value={scope}
+                    onChange={setScope}
+                    disabled={loading}
+                    options={[
+                      { value: 'inbox', label: 'Inbox' },
+                      { value: 'all', label: 'All mail' },
+                    ]}
+                  />
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 12 }}>
+                  {scope === 'inbox'
+                    ? 'Only mail currently in your inbox.'
+                    : 'Everything including archived, trash, and spam.'}
+                </div>
+                <button onClick={runScan} disabled={loading} className="gc-btn gc-btn-primary w-full">
+                  <span>Scan {scopeLabel}</span>
+                </button>
+              </div>
+              {status && <p style={{ fontSize: 11, color: 'var(--sub)', margin: '10px 2px 0' }}>{status}</p>}
+            </div>
           )}
 
-          {/* Scope — either/or, so a single connected segmented control. This is
-              the only control on this tab that requires a rescan to take effect. */}
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Where to look</p>
-            <div className="inline-flex rounded-full border border-gray-300 overflow-hidden text-xs bg-white">
-              <button
-                onClick={() => setScope('inbox')}
-                disabled={loading}
-                className={`px-3 py-1 disabled:opacity-50 ${
-                  scope === 'inbox' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                Inbox
-              </button>
-              <button
-                onClick={() => setScope('all')}
-                disabled={loading}
-                className={`px-3 py-1 border-l border-gray-300 disabled:opacity-50 ${
-                  scope === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                All mail
-              </button>
-            </div>
-            <p className="text-xs text-gray-400 mt-1">
-              {scope === 'inbox'
-                ? 'Only mail currently in your inbox.'
-                : 'Every message you have, including Spam and Trash.'}
-            </p>
-          </div>
-        </div>
-
-        {/* Filters and Show only make sense once there's scanned data to apply
-            them to — hidden before the first scan of this session so they
-            don't look like they're doing something with nothing to act on. */}
-        {(loading || hasScannedRef.current) && (
-          <>
-            {/* Filters — instant, applied to the last scan already in memory.
-                Toggling these never triggers a new scan or API call. */}
-            <div className="mb-1">
-              <p className="text-xs text-gray-500 mb-1">Filters</p>
-              <div className="flex flex-wrap gap-1.5">
-                {FILTERS.map((filter) => {
-                  const isActive = activeFilters.has(filter.id)
-                  return (
-                    <button
-                      key={filter.id}
-                      onClick={() => toggleFilter(filter.id)}
-                      className={`px-2 py-1 text-xs rounded-full border ${
-                        isActive
-                          ? 'bg-blue-600 border-blue-600 text-white'
-                          : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      {filter.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-            <p className="text-xs text-gray-400 mb-3">Applied instantly to the last scan — no rescan needed.</p>
-
-            {/* Show — which senders appear, based on whether they've sent at
-                least one email with a List-Unsubscribe header. Subscriptions
-                sits on the left, Non-subscriptions on the right. */}
-            <div className="mb-3">
-              <p className="text-xs text-gray-500 mb-1">Show</p>
-              <div className="inline-flex rounded-full border border-gray-300 overflow-hidden text-xs">
-                <button
-                  onClick={() => setShowMode('sub')}
-                  className={`px-3 py-1 ${showMode === 'sub' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                >
-                  Subscriptions
-                </button>
-                <button
-                  onClick={() => setShowMode('nonsub')}
-                  className={`px-3 py-1 border-l border-gray-300 ${showMode === 'nonsub' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                >
-                  Non-subscriptions
-                </button>
-              </div>
-
-              {/* Totals for each side — shown regardless of which Show mode is
-                  selected, so it's possible to compare subscriptions against
-                  everything else without switching back and forth. */}
-              <div className="text-xs text-gray-400 mt-1 space-y-0.5">
-                <p>Subscriptions: {subSenders.length} sender{subSenders.length !== 1 ? 's' : ''} · {formatSize(subTotalBytes)}</p>
-                <p>Non-subscriptions: {nonSubSenders.length} sender{nonSubSenders.length !== 1 ? 's' : ''} · {formatSize(nonSubTotalBytes)}</p>
-              </div>
-            </div>
-          </>
-        )}
-
-        {status && <p className="text-xs text-gray-400 mb-2">{status}</p>}
-
-        {/* Spinner shown right after clicking Scan, before any results have
-            streamed in yet. Gmail has to collect every matching message ID
-            before it can start returning details, which can take a moment
-            with nothing else on screen changing — this makes clear the scan
-            has actually started rather than looking stalled. */}
-        {loading && rawMessages.length === 0 && (
-          <div className="flex items-center gap-2 py-4 text-xs text-gray-400">
-            <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin shrink-0" />
-            Finding senders...
-          </div>
-        )}
-
-        {/* Scan progress bar */}
-        {loading && bulkProgress.total === 0 && (
-          <div className="mb-3">
-            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-              {progress.total === 0 ? (
-                <div className="bg-blue-400 h-1.5 w-full animate-pulse rounded-full" />
-              ) : (
-                <div
-                  className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
-                  style={{ width: `${Math.round((progress.loaded / progress.total) * 100)}%` }}
-                />
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Bulk unsub+delete confirmation */}
-        {bulkConfirm && (
-          <div className="mb-2 bg-red-50 border border-red-200 rounded p-2 text-xs">
-            <p className="text-gray-800 mb-2">
-              Unsubscribe and delete all emails from {visibleSubs.length} sender{visibleSubs.length !== 1 ? 's' : ''}? Unsubscribe requests will be sent silently in the background.
-            </p>
-            <div className="flex gap-2">
-              <button onClick={handleBulkUnsubAndDelete} className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700">
-                Yes, delete all
-              </button>
-              <button onClick={() => setBulkConfirm(false)} className="px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Bulk delete progress bar */}
-        {bulkProgress.total > 0 && (
-          <div className="mb-2">
-            <p className="text-xs text-gray-400 mb-1">
-              Deleting emails from sender {bulkProgress.loaded + 1} of {bulkProgress.total}...
-            </p>
-            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-              <div
-                className="bg-red-500 h-1.5 rounded-full transition-all duration-300"
-                style={{ width: `${Math.round((bulkProgress.loaded / bulkProgress.total) * 100)}%` }}
+          {/* ============ BUSY PHASE ============ */}
+          {zPhase === 'busy' && (
+            <div style={{ animation: 'gcInR .22s ease' }}>
+              <BusyCard
+                title={`Scanning ${scopeLabel}…`}
+                caption="Grouping mail by sender. This can take a minute for large mailboxes."
+                progress={progress.total > 0 ? progress : null}
               />
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Bulk action button — only when there are subscription senders currently visible */}
-        {visibleSubs.length > 0 && !bulkConfirm && (
-          <button
-            onClick={() => setBulkConfirm(true)}
-            disabled={loading || !!acting}
-            className="w-full mb-3 px-2 py-1.5 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-          >
-            Unsub &amp; Delete All Subscriptions ({visibleSubs.length} senders · {formatSize(visibleSubBytes)})
-          </button>
-        )}
-
-        {/* Sort toggle */}
-        {filteredSenders.length > 0 && (
-          <div className="flex items-center gap-2 mb-2">
-            <label className="text-xs text-gray-500 shrink-0">Sort by</label>
-            <div className="flex gap-1">
-              <button
-                onClick={() => setSortBy('count')}
-                className={`px-2 py-0.5 text-xs rounded border ${
-                  sortBy === 'count' ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                Count
-              </button>
-              <button
-                onClick={() => setSortBy('size')}
-                className={`px-2 py-0.5 text-xs rounded border ${
-                  sortBy === 'size' ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                Size
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Select all / act on selected — manual multi-select, available in
-            both views. On Subscriptions it offers all three actions, same as
-            a single row (Unsub, Delete all, Unsub & delete); on
-            Non-subscriptions only Delete all makes sense, since those
-            senders have nothing to unsubscribe from. */}
-        {filteredSenders.length > 0 && (
-          <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
-            <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
-              <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} />
-              Select all
-            </label>
-            {selectedSenders.size > 0 && !selectedActionConfirm && (
-              <div className="flex gap-1">
-                {showMode === 'sub' && (
-                  <button
-                    onClick={() => setSelectedActionConfirm('unsub')}
-                    disabled={loading || !!acting}
-                    className="px-2 py-1 text-xs bg-gray-100 text-gray-700 border border-gray-300 rounded hover:bg-gray-200 disabled:opacity-50"
-                  >
-                    Unsub selected
-                  </button>
-                )}
-                <button
-                  onClick={() => setSelectedActionConfirm('delete')}
-                  disabled={loading || !!acting}
-                  className="px-2 py-1 text-xs bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 disabled:opacity-50"
-                >
-                  Delete selected ({selectedSenders.size})
+          {/* ============ RESULTS PHASE ============ */}
+          {zPhase === 'results' && (
+            <div style={{ animation: 'gcInR .22s ease' }}>
+              {/* Header — total senders under the current filters + Rescan */}
+              <div className="flex items-baseline gap-1.5" style={{ margin: '0 2px 2px' }}>
+                <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' }}>
+                  {aggregatedSenders.length} senders
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--sub)' }}>· {formatSize(subTotalBytes + nonSubTotalBytes)}</span>
+                <button onClick={runScan} disabled={loading || !!acting} className="gc-btn-pill ml-auto">
+                  Rescan
                 </button>
-                {showMode === 'sub' && (
-                  <button
-                    onClick={() => setSelectedActionConfirm('unsubDelete')}
-                    disabled={loading || !!acting}
-                    className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                  >
-                    Unsub &amp; delete selected
-                  </button>
-                )}
               </div>
-            )}
-          </div>
-        )}
+              <div style={{ fontSize: 11, color: 'var(--faint)', margin: '0 2px 10px' }}>
+                Scanned {rawMessages.length.toLocaleString()} emails in {lastScanScope === 'inbox' ? 'Inbox' : 'All mail'}
+                {lastScanTime ? ` · ${formatTimeAgo(lastScanTime)}` : ''}
+              </div>
 
-        {selectedActionConfirm && (
-          <div className="mb-2 bg-red-50 border border-red-200 rounded p-2 text-xs">
-            <p className="text-gray-800 mb-2">{selectedActionText(selectedActionConfirm)}</p>
-            <div className="flex gap-2">
-              <button onClick={runSelectedAction} className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700">
-                Yes, confirm
-              </button>
-              <button onClick={() => setSelectedActionConfirm(null)} className="px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300">
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
+              {/* Filter chips — applied instantly, no rescan */}
+              <div className="flex flex-wrap gap-1.5" style={{ margin: '0 0 4px' }}>
+                {FILTERS.map((filter) => (
+                  <button
+                    key={filter.id}
+                    onClick={() => toggleFilter(filter.id)}
+                    className="gc-chip"
+                    data-active={activeFilters.has(filter.id)}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--faint)', margin: '0 2px 10px' }}>
+                Applied instantly to the last scan — no rescan needed.
+              </div>
 
-        {hasScannedRef.current && !loading && filteredSenders.length === 0 && (
-          <p className="text-xs text-gray-400 mb-2">No senders match the current filters.</p>
-        )}
+              {/* Subscriptions / Everything else */}
+              <div style={{ marginBottom: 6 }}>
+                <Segmented
+                  value={showMode}
+                  onChange={setShowMode}
+                  options={[
+                    { value: 'sub', label: 'Subscriptions' },
+                    { value: 'nonsub', label: 'Everything else' },
+                  ]}
+                />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--faint)', margin: '0 2px 10px', lineHeight: 1.6 }}>
+                <div>Subscriptions: {subSenders.length} sender{subSenders.length !== 1 ? 's' : ''} · {formatSize(subTotalBytes)}</div>
+                <div>Everything else: {nonSubSenders.length} sender{nonSubSenders.length !== 1 ? 's' : ''} · {formatSize(nonSubTotalBytes)}</div>
+              </div>
 
-        {/* Sender list — part of the same scroll as everything above it, so
-            scrolling down here moves the filters out of view too. */}
-        {filteredSenders.length > 0 && (
-          <ul className="space-y-2 select-none">
-            {filteredSenders.map((sender) => {
-              const isActing = acting === sender.email
-              const value = sortBy === 'count' ? sender.count : sender.totalBytes
-              const barPct = Math.max(2, Math.round((value / maxValue) * 100))
-              const isSelected = selectedSenders.has(sender.email)
-              return (
-                <li
-                  key={sender.email}
-                  data-sender-email={sender.email}
-                  onClick={() => window.parent.postMessage(
-                    { type: 'OPEN_SEARCH', query: `from:${sender.email}` }, '*'
-                  )}
-                  title={`Search Gmail for emails from ${sender.email}`}
-                  className={`flex gap-2 text-xs border-b border-gray-100 pb-2 last:border-0 last:pb-0 cursor-pointer rounded px-1 -mx-1 ${
-                    isSelected ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'
-                  }`}
-                >
-                  {/* Drag-select rail — a bead on a vertical track, not a plain
-                      checkbox. The track runs the full height of this row and
-                      meets the next row's track right below it, so the whole
-                      column reads as one continuous rail you slide a
-                      selection up and down, the same way a vertical slider
-                      works — rather than a set of unrelated checkboxes.
-                      It's the row's own click that opens a Gmail search, so
-                      the rail needs its own mousedown/mouseenter (and to stop
-                      those from also triggering that search). Cursor is a
-                      plain "grab" hand — not the resize double-arrow, which
-                      wrongly implied this could expand/resize something. */}
-                  <div className="relative shrink-0 w-4 flex flex-col items-center justify-center">
-                    <div className="absolute top-0 bottom-0 w-0.5 rounded-full bg-gray-200" />
-                    <button
-                      type="button"
-                      onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); e.stopPropagation(); startSenderDrag(sender.email, e) }}
-                      onMouseEnter={() => senderDragOver(sender.email)}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-pressed={isSelected}
-                      title="Drag up or down to select multiple senders"
-                      className={`relative z-10 w-3.5 h-3.5 rounded-full border-2 cursor-grab active:cursor-grabbing shrink-0 transition-colors ${
-                        isSelected ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300 hover:border-blue-400'
-                      }`}
+              {status && <p style={{ fontSize: 11, color: 'var(--sub)', margin: '0 2px 10px' }}>{status}</p>}
+
+              {/* Bulk unsub+delete progress bar */}
+              {bulkProgress.total > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <p style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 4 }}>
+                    Working on sender {Math.min(bulkProgress.loaded + 1, bulkProgress.total)} of {bulkProgress.total}…
+                  </p>
+                  <div className="overflow-hidden" style={{ height: 4, borderRadius: 2, background: 'var(--chip)' }}>
+                    <div
+                      className="h-full"
+                      style={{
+                        borderRadius: 2, background: 'var(--danger-bar)',
+                        width: `${Math.round((bulkProgress.loaded / bulkProgress.total) * 100)}%`,
+                        transition: 'width .3s',
+                      }}
                     />
                   </div>
+                </div>
+              )}
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1 mb-1">
-                      <span className="flex-1 min-w-0 truncate text-gray-700 font-medium" title={sender.email}>
-                        {sender.name || sender.email}
-                      </span>
-                      {sender.isSubscription && (
-                        <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                          Subscription
-                        </span>
+              {/* Unsub & delete all subscriptions — only on the Subscriptions view */}
+              {showMode === 'sub' && visibleSubs.length > 0 && bulkProgress.total === 0 && (
+                <button
+                  onClick={confirmUnsubDeleteAll}
+                  disabled={loading || !!acting}
+                  className="gc-btn gc-btn-danger w-full"
+                  style={{ padding: 10, fontSize: '12.5px', marginBottom: 12 }}
+                >
+                  Unsub &amp; delete all subscriptions ({visibleSubs.length} · {formatSize(visibleSubBytes)})…
+                </button>
+              )}
+
+              {/* Select all + sort */}
+              {filteredSenders.length > 0 && (
+                <div className="flex items-center gap-2" style={{ margin: '0 2px 8px' }}>
+                  <button
+                    onClick={toggleSelectAll}
+                    className="flex items-center gap-1.5 border-none bg-transparent cursor-pointer"
+                    style={{ color: 'var(--sub)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 600, padding: 2 }}
+                  >
+                    <span
+                      className="grid place-items-center box-border"
+                      style={{
+                        width: 13, height: 13, borderRadius: 4,
+                        border: `1.5px solid ${allVisibleSelected ? 'var(--accent)' : 'var(--faint)'}`,
+                        background: allVisibleSelected ? 'var(--accent-grad)' : 'var(--card)',
+                        color: 'var(--accent-ink)',
+                      }}
+                    >
+                      {allVisibleSelected && (
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <path d="M1.5 5.5 4 8l4.5-6" />
+                        </svg>
                       )}
-                      <span className="text-gray-400 shrink-0 ml-1 text-right">
-                        <span className="block">{sender.count} emails</span>
-                        <span className="block">{formatSize(sender.totalBytes || 0)}</span>
-                      </span>
-                    </div>
+                    </span>
+                    Select all shown
+                  </button>
+                  <div className="ml-auto">
+                    <Segmented
+                      size="pill"
+                      value={sortBy}
+                      onChange={setSortBy}
+                      options={[
+                        { value: 'size', label: 'Size' },
+                        { value: 'count', label: 'Count' },
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
 
-                    <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden mb-1.5">
-                      <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${barPct}%` }} />
-                    </div>
-
-                    {isActing ? (
-                      <p className="text-gray-400 italic">Working...</p>
-                    ) : confirmAction && confirmAction.sender.email === sender.email ? (
-                      /* Confirmation replaces the normal buttons for this row
-                         only — a deliberate second click, not a popup that
-                         could itself be clicked through by accident. */
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="bg-red-50 border border-red-200 rounded p-1.5"
-                      >
-                        <p className="text-gray-800 mb-1">{confirmActionText(confirmAction.type, sender)}</p>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={runConfirmedAction}
-                            className="px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700"
-                          >
-                            Yes, confirm
-                          </button>
-                          <button
-                            onClick={() => setConfirmAction(null)}
-                            className="px-2 py-0.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-                          >
-                            Cancel
-                          </button>
+              {/* Sender cards — rail + card. The rail bead starts a drag-
+                  select; clicking the card body toggles just that row. */}
+              {filteredSenders.map((sender) => {
+                const isActing = acting === sender.email
+                const value = sortBy === 'count' ? sender.count : sender.totalBytes
+                const barPct = Math.max(3, Math.round((value / maxValue) * 100))
+                const isSelected = selectedSenders.has(sender.email)
+                return (
+                  <div
+                    key={sender.email}
+                    data-sender-email={sender.email}
+                    className="flex items-stretch gap-2"
+                    style={{ margin: '0 0 8px' }}
+                    onMouseEnter={() => senderDragOver(sender.email)}
+                  >
+                    <Rail
+                      selected={isSelected}
+                      onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); startSenderDrag(sender.email, e) }}
+                    />
+                    <div
+                      onClick={() => applySenderSelection(sender.email, !isSelected)}
+                      className="flex-1 min-w-0 cursor-pointer transition-all hover:-translate-y-[2px] hover:shadow-[0_6px_16px_rgba(40,35,25,.12)]"
+                      style={{
+                        padding: '10px 12px', borderRadius: 'var(--radius)',
+                        border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--line)'}`,
+                        background: isSelected ? 'var(--sel)' : 'var(--card)',
+                        boxShadow: 'var(--shadow)',
+                      }}
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="overflow-hidden text-ellipsis whitespace-nowrap" style={{ fontWeight: 600, fontSize: '12.5px' }} title={sender.email}>
+                            {sender.name || sender.email}
+                          </div>
+                          {sender.isSubscription && (
+                            <div className="flex gap-1" style={{ marginTop: 3 }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--sub)', background: 'var(--chip)', borderRadius: 999, padding: '2px 8px' }}>
+                                Subscription
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0" style={{ fontSize: 11, color: 'var(--sub)', lineHeight: 1.5 }}>
+                          <div>{sender.count.toLocaleString()} email{sender.count !== 1 ? 's' : ''}</div>
+                          <div style={{ color: 'var(--faint)' }}>{formatSize(sender.totalBytes || 0)}</div>
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex gap-1">
-                        {sender.isSubscription && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setConfirmAction({ sender, type: 'unsub' }) }}
-                            disabled={!!acting || loading}
-                            className="px-2 py-0.5 bg-gray-100 text-gray-700 border border-gray-300 rounded hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            Unsub
-                          </button>
-                        )}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setConfirmAction({ sender, type: 'delete' }) }}
-                          disabled={!!acting || loading}
-                          className="px-2 py-0.5 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          Delete all
-                        </button>
-                        {sender.isSubscription && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setConfirmAction({ sender, type: 'unsubDelete' }) }}
-                            disabled={!!acting || loading}
-                            className="px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            Unsub &amp; delete
-                          </button>
-                        )}
+
+                      {/* relative size bar */}
+                      <div className="overflow-hidden" style={{ height: 4, borderRadius: 2, background: 'var(--chip)', margin: '9px 0 10px' }}>
+                        <div className="h-full" style={{ borderRadius: 2, background: 'var(--accent-grad)', width: `${barPct}%` }} />
                       </div>
-                    )}
+
+                      {isActing ? (
+                        <p style={{ fontSize: '11.5px', color: 'var(--faint)', fontStyle: 'italic' }}>Working…</p>
+                      ) : (
+                        <div className="flex gap-1.5" style={{ marginTop: 4 }}>
+                          {sender.isSubscription && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); confirmUnsubSender(sender) }}
+                              disabled={!!acting || loading}
+                              className="gc-btn gc-btn-neutral"
+                              style={{ padding: '6px 10px', fontSize: '11.5px' }}
+                            >
+                              Unsubscribe…
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); confirmDeleteSender(sender) }}
+                            disabled={!!acting || loading}
+                            className="gc-btn gc-btn-danger"
+                            style={{ padding: '6px 10px', fontSize: '11.5px' }}
+                          >
+                            Delete all…
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </li>
-              )
-            })}
-          </ul>
-        )}
+                )
+              })}
+
+              {filteredSenders.length === 0 && !loading && (
+                <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--faint)', fontSize: 12 }}>
+                  No senders in this group.
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, color: 'var(--faint)', textAlign: 'center', marginTop: 8 }}>
+            Scans directly from your emails
+          </div>
         </div>
 
-        {/* Back to top — scrolls this region (header, filters, and list)
-            back to the top; it sits within this region so it never overlaps
-            the manual-unsubscribe panel pinned below. */}
+        {/* Back to top — floats over the scroll box once it's scrolled a bit */}
         {showBackToTop && (
           <button
             onClick={scrollToTop}
             title="Back to top"
-            className="absolute bottom-2 right-2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-800 text-white shadow-md hover:bg-black"
+            className="absolute grid place-items-center cursor-pointer z-10"
+            style={{
+              bottom: 8, right: 8, width: 32, height: 32, borderRadius: 999,
+              border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--ink)',
+              boxShadow: 'var(--shadow-dd)',
+            }}
           >
             ↑
           </button>
@@ -1145,71 +930,113 @@ export default function SendersTab({ onAuthError, onAction }) {
 
       {/* Manual unsubscribe queue — senders whose pages require a button
           click. Pinned at the bottom rather than part of the scroll above,
-          so it's always visible without scrolling all the way down to find
-          it. Sizes itself to fit its own content, capped at 1/3 of this
-          tab's height (the drag handle can also pull it smaller, giving the
-          sender list above more room, or back up toward that same 1/3 cap).
-          Only shown on the Subscriptions view, since manual unsubscribing
-          has nothing to do with Non-subscriptions. */}
-      {needsManualUnsub.length > 0 && showMode === 'sub' && (
+          so it's always visible. The handle can drag it taller (up to 1/3 of
+          the tab) or shorter; double-click resets. Only shown on the
+          Subscriptions view. */}
+      {needsManualUnsub.length > 0 && showMode === 'sub' && zPhase === 'results' && (
         <div
           ref={manualPanelRef}
-          className="shrink-0 flex flex-col mt-3 border-t border-amber-200"
+          className="shrink-0 flex flex-col"
           style={{
+            borderTop: '2px solid #d9a02b',
+            background: 'var(--card)',
             maxHeight: '33.333%',
             height: manualPanelHeight != null ? `${manualPanelHeight}px` : undefined,
           }}
         >
-          {/* Drag handle — grab and drag up to grow this panel (shrinking the
-              sender list above), or down to shrink it (growing the list).
-              Double-click resets back to "fit my content, up to the cap". */}
+          {/* Drag handle — grab and drag up/down to resize; double-click resets. */}
           <div
             onMouseDown={startManualPanelDrag}
             onDoubleClick={() => setManualPanelHeight(null)}
             title="Drag to resize · double-click to reset"
-            className="shrink-0 -mt-px flex items-center justify-center py-1 cursor-ns-resize touch-none select-none group"
+            className="shrink-0 flex items-center justify-center py-1 cursor-ns-resize touch-none select-none group"
           >
-            <div className="w-10 h-1 rounded-full bg-amber-300 group-hover:bg-amber-500" />
+            <div className="w-10 h-1 rounded-full" style={{ background: '#e3c98a' }} />
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <p className="text-xs font-semibold text-amber-600 mb-0.5">
-              ⚠ Needs manual unsubscribe ({needsManualUnsub.length})
-            </p>
-            <p className="text-xs text-gray-400 mb-2">
-              These senders use a confirmation page that requires a button click. Open each one to finish unsubscribing.
-            </p>
-            <ul className="space-y-1">
-              {needsManualUnsub.map((sub) => {
-                const url = parseUnsubscribeUrl(sub.unsubHeader)
-                return (
-                  <li key={sub.email} className="flex items-center gap-2 text-xs">
-                    <span className="flex-1 min-w-0 truncate text-gray-700" title={sub.email}>
-                      {sub.name || sub.email}
-                    </span>
-                    <button
-                      onClick={() => {
-                        if (url) window.parent.postMessage({ type: 'OPEN_URL', url }, '*')
-                        setNeedsManualUnsub((prev) => prev.filter((s) => s.email !== sub.email))
-                      }}
-                      className="shrink-0 px-2 py-0.5 text-xs bg-amber-50 text-amber-700 border border-amber-300 rounded hover:bg-amber-100"
-                    >
-                      Open
-                    </button>
-                    <button
-                      onClick={() => setNeedsManualUnsub((prev) => prev.filter((s) => s.email !== sub.email))}
-                      className="shrink-0 text-gray-300 hover:text-gray-500"
-                      title="Dismiss"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
+          <div className="flex-1 min-h-0 overflow-y-auto" style={{ padding: '0 14px 12px' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#a4770f' }}>
+              Needs manual unsubscribe ({needsManualUnsub.length})
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--sub)', margin: '2px 0 6px' }}>
+              These senders use a confirmation page. Open each one to finish unsubscribing.
+            </div>
+            {needsManualUnsub.map((sub) => {
+              const url = parseUnsubscribeUrl(sub.unsubHeader)
+              return (
+                <div key={sub.email} className="flex items-center gap-2" style={{ padding: '4px 0' }}>
+                  <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" style={{ fontSize: 12 }} title={sub.email}>
+                    {sub.name || sub.email}
+                  </span>
+                  <button
+                    onClick={() => {
+                      if (url) window.parent.postMessage({ type: 'OPEN_URL', url }, '*')
+                      setNeedsManualUnsub((prev) => prev.filter((s) => s.email !== sub.email))
+                    }}
+                    className="shrink-0 cursor-pointer"
+                    style={{
+                      border: '1px solid #e3c98a', background: '#faf3df', color: '#8a6516',
+                      borderRadius: 999, padding: '3px 12px', fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                    }}
+                  >
+                    Open
+                  </button>
+                  <button
+                    onClick={() => setNeedsManualUnsub((prev) => prev.filter((s) => s.email !== sub.email))}
+                    title="Dismiss"
+                    className="shrink-0 grid place-items-center border-none bg-transparent cursor-pointer p-0.5"
+                    style={{ color: 'var(--faint)' }}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                      <path d="M3 3l8 8M11 3l-8 8" />
+                    </svg>
+                  </button>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
+
+      {/* Floating bulk-action bar — rises while senders are selected */}
+      {zPhase === 'results' && selectedList.length > 0 && !confirm && bulkProgress.total === 0 && (
+        <BulkBar
+          label={`${selectedList.length} sender${selectedList.length !== 1 ? 's' : ''} · ${formatSize(selectedBytes)}`}
+          onClear={() => setSelectedSenders(new Set())}
+        >
+          {selectedSubs.length > 0 && (
+            <button
+              onClick={confirmUnsubSelected}
+              disabled={loading || !!acting}
+              className="gc-btn gc-btn-neutral flex-1"
+              style={{ padding: '9px 6px', fontSize: 12 }}
+            >
+              Unsub…
+            </button>
+          )}
+          <button
+            onClick={confirmDeleteSelected}
+            disabled={loading || !!acting}
+            className="gc-btn gc-btn-danger flex-1"
+            style={{ padding: '9px 6px', fontSize: 12 }}
+          >
+            Delete…
+          </button>
+          {selectedSubs.length > 0 && (
+            <button
+              onClick={confirmUnsubDeleteSelected}
+              disabled={loading || !!acting}
+              className="gc-btn gc-btn-danger-solid"
+              style={{ flex: 1.4, padding: '9px 6px', fontSize: 12 }}
+            >
+              Unsub &amp; delete…
+            </button>
+          )}
+        </BulkBar>
+      )}
+
+      {/* Confirmation sheet — every destructive action passes through here */}
+      <ConfirmSheet confirm={confirm} onCancel={() => setConfirm(null)} />
     </div>
   )
 }
