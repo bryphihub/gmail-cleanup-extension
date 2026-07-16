@@ -2,13 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Makes the page track the real window width — without this, browser
+         device emulation (used when previewing the panel at 400px wide)
+         falls back to a fake 980px desktop width. Harmless in the extension
+         iframe, which sizes the panel with CSS anyway. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Gmail Cleanup</title>
     <!-- Panel fills its iframe container — no fixed width needed. -->
     <style>
       body { width: 100%; height: 100vh; margin: 0; overflow-y: auto; }
     </style>
-    <script type="module" crossorigin src="/assets/index-C-uHVl6m.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-2HPwkDzD.css">
+    <script type="module" crossorigin src="/assets/index-CG0zt0Oz.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-SzMJkiV9.css">
   </head>
   <body>
     <!-- React mounts our App component into this div. -->

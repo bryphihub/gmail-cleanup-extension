@@ -1,3 +1,288 @@
 /* This single line loads the entire Tailwind CSS library.
    Tailwind v4 uses this import instead of a separate config file. */
 @import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens — the "Porcelain" palette from the design handoff
+   (design_handoff_gmail_cleanup_panel/README.md in the Claude design project).
+   Every color/radius/shadow in the UI reads from these variables, so a future
+   re-theme only has to touch this one block.
+--------------------------------------------------------------------------- */
+:root {
+  --bg: #f6f5f1;          /* panel background — warm paper */
+  --card: #fffefb;        /* cards, fields, dropdown panels */
+  --ink: #26231e;         /* primary text */
+  --sub: #6f6a60;         /* secondary text / labels */
+  --faint: #a8a294;       /* tertiary / hint text */
+  --line: #e6e2d8;        /* borders */
+  --chip: #edeae2;        /* chip / segmented-control backgrounds */
+  --sel: #e9eff8;         /* selected/hover blue tint */
+  --accent: #2f6bc4;      /* accent blue — links, checkmarks, selected states */
+  --accent-ink: #ffffff;  /* text on accent backgrounds */
+  --accent-grad: linear-gradient(135deg, #4a8bd8 0%, #2f6bc4 100%);
+  --danger: #a63d2e;      /* danger text/buttons */
+  --danger-bar: #b3402f;  /* danger progress bar / solid danger button */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(40, 35, 25, .06);
+  --shadow-dd: 0 8px 24px rgba(40, 35, 25, .16);   /* dropdown panels */
+  --spring: cubic-bezier(.34, 1.56, .64, 1);        /* springy easing used everywhere */
+}
+
+/* Base look of the whole panel (the iframe fills the injected 400px strip). */
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Avenir Next', 'Seravek', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------------------------
+   Motion — keyframes copied from the design file.
+--------------------------------------------------------------------------- */
+@keyframes gcSlide {              /* indeterminate progress bar sweep */
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(400%); }
+}
+@keyframes gcRise {               /* toasts / sheets rising into view */
+  from { transform: translateY(10px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes gcShrink {             /* undo-toast countdown bar */
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+@keyframes gcInL {                /* Search tab slides in from the left */
+  from { transform: translateX(-22px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+@keyframes gcInR {                /* Senders tab slides in from the right */
+  from { transform: translateX(22px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+@keyframes gcDdIn {               /* dropdown panel opening */
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes gcSheen {              /* gradient sheen sweeping across primary buttons on hover —
+                                     the CSS fallback the design README allows in place of the
+                                     WebGL shader glow */
+  0%   { transform: translateX(-120%) skewX(-18deg); }
+  100% { transform: translateX(260%)  skewX(-18deg); }
+}
+
+/* ---------------------------------------------------------------------------
+   Shared component classes. The design file styles everything inline; here
+   the repeated recipes live as small CSS classes instead so the JSX stays
+   readable and every button/field looks identical everywhere it appears.
+--------------------------------------------------------------------------- */
+
+/* Card container */
+.gc-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Text inputs and dropdown triggers ("fields") */
+.gc-field {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink);
+  text-align: left;
+}
+.gc-field::placeholder { color: var(--faint); }
+.gc-field:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 107, 196, .55);
+}
+
+/* Base shared by all animated buttons: springy transform + shadow */
+.gc-btn {
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .25s var(--spring), box-shadow .2s, background .18s,
+              border-color .18s, color .18s;
+}
+.gc-btn:disabled { opacity: .5; cursor: default; }
+
+/* Primary gradient button (Search / Scan) with the hover sheen */
+.gc-btn-primary {
+  position: relative;
+  overflow: hidden;
+  padding: 11px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--accent-grad);
+  color: var(--accent-ink);
+  font-size: 13px;
+  transition: transform .25s var(--spring), box-shadow .25s ease;
+}
+.gc-btn-primary > span { position: relative; text-shadow: 0 1px 2px rgba(20, 40, 80, .18); }
+.gc-btn-primary::after {          /* the sheen strip — only animates on hover */
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 45%;
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(160,205,255,.5) 50%, rgba(255,255,255,0) 100%);
+  transform: translateX(-120%) skewX(-18deg);
+  pointer-events: none;
+}
+.gc-btn-primary:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(43, 95, 174, .3); }
+.gc-btn-primary:hover:not(:disabled)::after { animation: gcSheen 1.1s ease-in-out infinite; }
+.gc-btn-primary:active:not(:disabled) { transform: scale(.96); box-shadow: 0 1px 3px rgba(43, 95, 174, .3); }
+
+/* Quiet danger button — red text, fills lightly red on hover */
+.gc-btn-danger {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+}
+.gc-btn-danger:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  box-shadow: var(--shadow);
+  background: rgba(166, 61, 46, .05);
+}
+.gc-btn-danger:active:not(:disabled) { transform: scale(.95); }
+
+/* Solid danger button — the "Unsub & delete" / confirm CTA style */
+.gc-btn-danger-solid {
+  border: none;
+  background: var(--danger-bar);
+  color: #fff;
+  border-radius: var(--radius-sm);
+}
+.gc-btn-danger-solid:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  box-shadow: 0 5px 14px rgba(166, 61, 46, .35);
+}
+.gc-btn-danger-solid:active:not(:disabled) { transform: scale(.96); }
+
+/* Neutral button — panel-bg fill, thin border (Cancel / Archive / Unsubscribe) */
+.gc-btn-neutral {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+}
+.gc-btn-neutral:hover:not(:disabled) { transform: translateY(-1.5px); box-shadow: var(--shadow); }
+.gc-btn-neutral:active:not(:disabled) { transform: scale(.95); }
+
+/* Small round pill button (Rescan / Stop / Select-Deselect in top senders) */
+.gc-btn-pill {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .25s var(--spring), box-shadow .2s, border-color .18s, color .18s;
+}
+.gc-btn-pill:hover:not(:disabled) { transform: translateY(-1.5px); box-shadow: var(--shadow); }
+.gc-btn-pill:active:not(:disabled) { transform: scale(.95); }
+
+/* Accent-blue text links (Edit, Select all, Deselect all…). Intentionally
+   static — the design reserves motion for primary/secondary actions only. */
+.gc-link {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.gc-link:hover { text-decoration: underline; }
+
+/* Toggleable filter chips (Older than 1 year, Unread only, …) */
+.gc-chip {
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--sub);
+  transition: transform .25s var(--spring), box-shadow .2s, border-color .18s,
+              background .18s, color .18s;
+}
+.gc-chip:hover { transform: translateY(-1.5px); box-shadow: var(--shadow); }
+.gc-chip:active { transform: scale(.95); }
+.gc-chip[data-active="true"] {
+  border-color: var(--accent);
+  background: var(--sel);
+  color: var(--accent);
+}
+
+/* Quick-preset grid buttons */
+.gc-preset {
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform .25s var(--spring), border-color .18s, color .18s, box-shadow .2s;
+}
+.gc-preset:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: var(--shadow);
+}
+.gc-preset:active:not(:disabled) { transform: scale(.95); }
+.gc-preset:disabled { opacity: .5; }
+
+/* Dropdown option rows — hover tint follows the mouse */
+.gc-dd-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.gc-dd-opt:hover { background: var(--sel); }
+
+/* Uppercase section headers (RESULTS, TOP SENDERS IN RESULTS) */
+.gc-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
