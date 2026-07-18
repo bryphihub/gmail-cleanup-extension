@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from 'react'
 import { getToken, GmailAuthError } from './auth.js'
 import { untrashMessage, restoreToInbox } from './gmail.js'
 import { Segmented } from './ui.jsx'
+import Onboarding from './Onboarding.jsx'
 import SearchTab from './SearchTab.jsx'
 import SendersTab from './SendersTab.jsx'
 
@@ -22,6 +23,20 @@ export default function App() {
   const [account, setAccount] = useState(null)
   const [status, setStatus] = useState('')
   const [activeTab, setActiveTab] = useState('search')
+
+  // Boot state: false until we've checked storage for the onboarding flag
+  // AND tried a silent token — prevents the onboarding welcome flashing for
+  // a split second before an already-connected panel appears.
+  const [booted, setBooted] = useState(false)
+  // True once the person has completed the onboarding flow (or was already
+  // connected before it existed). When true, a signed-out open goes straight
+  // to the Connect screen instead of the full welcome tour.
+  const [onboardingDone, setOnboardingDone] = useState(false)
+
+  function markOnboardingDone() {
+    setOnboardingDone(true)
+    chrome.storage.local.set({ onboardingDone: true })
+  }
 
   // True once any Gmail action in either tab hits an expired/revoked token
   // (a GmailAuthError — see auth.js/gmail.js). Shown as a small banner with a
@@ -94,12 +109,22 @@ export default function App() {
     setNeedsReconnect(false)
   }
 
-  // On mount: try to connect silently (no consent popup) using a token we
-  // already have permission for from a previous session.
+  // On mount: read the onboarding flag, then try to connect silently (no
+  // consent popup) using a token we already have permission for from a
+  // previous session. A silent success also marks onboarding done — people
+  // who connected before the onboarding flow existed shouldn't see it.
   useEffect(() => {
-    getToken(false)
-      .then(fetchAccount)
-      .catch(() => {})
+    chrome.storage.local.get('onboardingDone', (r) => {
+      if (r.onboardingDone) setOnboardingDone(true)
+      getToken(false)
+        .then(async (token) => {
+          await fetchAccount(token)
+          markOnboardingDone()
+        })
+        .catch(() => {})
+        .finally(() => setBooted(true))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Only called when the user clicks Connect for the first time.
@@ -112,6 +137,28 @@ export default function App() {
       .catch((err) => setStatus('Error: ' + err.message))
   }
 
+  // Still deciding what to show (storage + silent-token check) — render just
+  // the panel background for a beat rather than flashing the wrong screen.
+  if (!booted) {
+    return <div className="h-screen" style={{ background: 'var(--bg)' }} />
+  }
+
+  // Not connected: the onboarding flow owns the whole panel (each of its
+  // screens renders its own header). People who completed onboarding before
+  // but are signed out start directly on the Connect screen.
+  if (!account) {
+    return (
+      <Onboarding
+        skipWelcome={onboardingDone}
+        onComplete={(email) => {
+          setAccount(email)
+          setNeedsReconnect(false)
+          markOnboardingDone()
+        }}
+      />
+    )
+  }
+
   return (
     // h-screen + flex-col gives the panel a real, fixed height to work with —
     // the tab area below (flex-1) fills whatever's left after the header, so
@@ -122,11 +169,11 @@ export default function App() {
       <div className="flex items-center gap-2 shrink-0" style={{ padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
         <div
           className="grid place-items-center shrink-0"
-          style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--accent-grad)', color: 'var(--accent-ink)' }}
+          style={{ width: 22, height: 22, borderRadius: 6, background: 'linear-gradient(135deg,#6bb3f4,#2f6bc4)', color: 'var(--accent-ink)' }}
         >
-          {/* little broom mark from the design */}
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-            <path d="M2 9.5h8" /><path d="M4 6.5 6 2l2 4.5" /><path d="M3.2 9.5 4 6.5h4l.8 3" />
+          {/* envelope mark — same logo as onboarding screen 1a and the extension icon */}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="5" width="16" height="14" rx="2" /><path d="M4 7l8 6 8-6" />
           </svg>
         </div>
         <div style={{ fontWeight: 600, fontSize: 13, letterSpacing: '-0.01em' }}>Gmail Cleanup</div>
@@ -154,22 +201,7 @@ export default function App() {
         </button>
       </div>
 
-      {!account ? (
-        // Not connected yet — a single card inviting the person to connect.
-        <div style={{ padding: '20px 14px' }}>
-          <div className="gc-card" style={{ padding: 16 }}>
-            <div style={{ fontWeight: 600, fontSize: '12.5px', marginBottom: 4 }}>Connect your Gmail</div>
-            <div style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 12 }}>
-              Sign in with Google to find and clean up storage-heavy email. Nothing is ever removed without your confirmation.
-            </div>
-            <button onClick={handleConnect} className="gc-btn gc-btn-primary w-full">
-              <span>Connect Gmail</span>
-            </button>
-            {status && <div style={{ fontSize: 11, color: 'var(--sub)', marginTop: 10, textAlign: 'center' }}>{status}</div>}
-          </div>
-        </div>
-      ) : (
-        <>
+      <>
           {/* Tabs */}
           <div className="shrink-0" style={{ margin: '10px 14px 0' }}>
             <Segmented
@@ -210,15 +242,24 @@ export default function App() {
                 bounded space to fill. Both also get onAuthError (shows the
                 Reconnect banner above) and onAction (reports a Trash/Archive/
                 Delete so the Undo toast below can pop up). */}
+            {/* The horizontal slide-in lives HERE, on a wrapper inside each
+                display-toggled container — flipping display from none to
+                block restarts CSS animations, so it replays exactly when a
+                tab is switched to. Phase changes inside a tab animate
+                vertically instead (see the tabs themselves), keeping
+                "horizontal = tab change, vertical = phase change". */}
             <div className="flex-1 min-h-0" style={{ display: activeTab === 'search' ? 'block' : 'none' }}>
-              <SearchTab onAuthError={() => setNeedsReconnect(true)} onAction={rememberUndo} />
+              <div className="h-full" style={{ animation: 'gcInL .22s ease' }}>
+                <SearchTab onAuthError={() => setNeedsReconnect(true)} onAction={rememberUndo} />
+              </div>
             </div>
             <div className="flex-1 min-h-0" style={{ display: activeTab === 'senders' ? 'block' : 'none' }}>
-              <SendersTab onAuthError={() => setNeedsReconnect(true)} onAction={rememberUndo} />
+              <div className="h-full" style={{ animation: 'gcInR .22s ease' }}>
+                <SendersTab onAuthError={() => setNeedsReconnect(true)} onAction={rememberUndo} />
+              </div>
             </div>
           </div>
-        </>
-      )}
+      </>
 
       {/* Undo toast — floats over the very bottom of the panel right after a
           Trash/Archive/Delete action. The thin bar along its bottom edge

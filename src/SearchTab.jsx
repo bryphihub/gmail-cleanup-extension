@@ -12,7 +12,7 @@
 // All the Gmail logic (batching, rate-limit pauses, undo reporting) is the
 // same as before the redesign — only the presentation changed.
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { getToken, GmailAuthError } from './auth.js'
 import {
   listAllMessageIds, getAllIds, getMessageMetadata, trashMessage, archiveMessage,
@@ -20,7 +20,7 @@ import {
 import { formatSize, parseSenderName, dragScrollSpeed } from './utils.js'
 import { PRESETS } from './presets.js'
 import FilterPanel, { buildQuery, DEFAULT_FILTERS, summarizeFilters } from './FilterPanel.jsx'
-import { Dropdown, ConfirmSheet, BusyCard, Rail, BulkBar } from './ui.jsx'
+import { Dropdown, ConfirmSheet, Rail, BulkBar, PrimaryButton, ProgressStrip } from './ui.jsx'
 
 const SORT_OPTIONS = [
   { value: 'largest',  label: 'Largest first' },
@@ -43,6 +43,22 @@ export default function SearchTab({ onAuthError, onAction }) {
 
   // Which of the three screens is showing (see the top-of-file comment).
   const [phase, setPhase] = useState('form')
+
+  // Vertical entrance for phase changes within this tab: results rise up,
+  // the form drops back down. Applied as a short-lived inline animation only
+  // at the moment the phase actually changes — if it were set permanently,
+  // it would also replay whenever the tab is shown again after switching
+  // tabs (display:none → block restarts CSS animations), which is exactly
+  // the "feels like a tab switch" confusion this avoids.
+  const [phaseAnim, setPhaseAnim] = useState(null)
+  const prevPhaseRef = useRef(phase)
+  useEffect(() => {
+    if (prevPhaseRef.current === phase) return
+    prevPhaseRef.current = phase
+    setPhaseAnim(phase === 'results' ? 'gcInUp .22s ease' : 'gcInDown .22s ease')
+    const t = setTimeout(() => setPhaseAnim(null), 260) // clear after it finishes
+    return () => clearTimeout(t)
+  }, [phase])
 
   const [emails, setEmails] = useState([])
   const [totalSize, setTotalSize] = useState(null)     // bytes — null until a search completes
@@ -70,11 +86,16 @@ export default function SearchTab({ onAuthError, onAction }) {
   // True while a trash/archive operation is in progress.
   const [acting, setActing] = useState(false)
 
-  // Search progress state for the busy card.
-  //   'fetching-ids'     → indeterminate sweep (we don't know the total yet)
-  //   'loading-metadata' → filled bar based on loaded / total
-  const [searchPhase, setSearchPhase] = useState(null)
-  const [progress, setProgress] = useState({ loaded: 0, total: 0 })
+  // Live-search state: null when idle, or { stage: 'searching' | 'estimating' }
+  // while a search is streaming. The results list renders underneath the
+  // sticky progress strip and rows appear batch by batch as they load.
+  const [searchRun, setSearchRun] = useState(null)
+  // True when the search ended early (Stop, or an error mid-stream) — the
+  // summary card then labels the results as partial, and "Move all to
+  // Trash" is hidden since "all matching" could be more than what's shown.
+  const [stoppedEarly, setStoppedEarly] = useState(false)
+  // Checked between batches so Stop can halt the search loops mid-run.
+  const searchCancelledRef = useRef(false)
   const [eta, setEta] = useState(null) // seconds remaining, null = unknown
 
   // Trash-all run state: null, or { done, total } while the loop is running —
@@ -217,6 +238,7 @@ export default function SearchTab({ onAuthError, onAction }) {
     const cached = presetCacheRef.current[preset.label]
     if (cached) {
       setActivePreset(preset.label)
+      setStoppedEarly(false) // cached presets are always complete results
       setEmails(cached.emails)
       setTotalSize(cached.totalSize)
       setSizeIsEstimate(cached.sizeIsEstimate)
@@ -232,11 +254,15 @@ export default function SearchTab({ onAuthError, onAction }) {
   }
 
   // Called with the constructed query string from the filter form, or by
-  // runPreset the first time a given preset is run.
+  // runPreset the first time a given preset is run. Goes straight to the
+  // results view and streams rows in batch by batch — the busy state is the
+  // sticky progress strip above the growing list, not a separate screen.
   async function handleFind(query, presetLabel = null) {
     setActivePreset(presetLabel)
     setLoading(true)
-    setPhase('busy')
+    setPhase('results')
+    setSearchRun({ stage: 'searching' })
+    setStoppedEarly(false)
     setEmails([])
     setTotalSize(null)
     setSizeIsEstimate(false)
@@ -245,17 +271,30 @@ export default function SearchTab({ onAuthError, onAction }) {
     setConfirm(null)
     setEta(null)
     setStatus('')
+    searchCancelledRef.current = false
     lastQueryRef.current = query
 
     const BATCH_SIZE = 10
     const BATCH_DELAY_MS = 300
     const SAMPLE_SIZE = 350
 
+    // Declared outside the try so the catch block can keep whatever streamed
+    // in before an error — partial results stay on screen and usable.
+    const allMsgs = []
+
+    // Shared "wrap up as a partial result" path for Stop and mid-run errors:
+    // whatever's loaded becomes the (exact-sized) result set.
+    const finishPartial = () => {
+      setStoppedEarly(true)
+      setMatchTotal(allMsgs.length)
+      setTotalSize(allMsgs.reduce((sum, m) => sum + (m.sizeEstimate || 0), 0))
+      setSizeIsEstimate(false)
+    }
+
     try {
       const token = await getToken(false)
 
-      // Phase 1: fetch first 500 IDs — duration unknown, indeterminate bar.
-      setSearchPhase('fetching-ids')
+      // Phase 1: fetch the first 500 matching IDs.
       const { ids } = await listAllMessageIds(token, query)
 
       if (ids.length === 0) {
@@ -266,34 +305,29 @@ export default function SearchTab({ onAuthError, onAction }) {
             emails: [], totalSize: 0, sizeIsEstimate: false, matchTotal: 0,
           }
         }
-        setPhase('results')
         return
       }
 
       const capped = ids.length === 500
-
-      // If capped, the bar covers 500 initial + 350 sample = 850 total steps.
       const metadataTotal = capped ? ids.length + SAMPLE_SIZE : ids.length
 
-      setSearchPhase('loading-metadata')
-      setProgress({ loaded: 0, total: metadataTotal })
-
-      // Phase 2: load metadata for the first 500.
-      const allMsgs = []
+      // Phase 2: load metadata, streaming rows into the list per batch (one
+      // state update per page of responses, not per message). The render
+      // sorts on the fly, so new rows land in sort order automatically.
       const startTime = Date.now()
 
       for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        if (searchCancelledRef.current) { finishPartial(); return }
         const batch = ids.slice(i, i + BATCH_SIZE)
         const batchMsgs = await Promise.all(batch.map((id) => getMessageMetadata(token, id)))
         allMsgs.push(...batchMsgs)
-        setProgress({ loaded: allMsgs.length, total: metadataTotal })
+        setEmails([...allMsgs])
 
-        // ETA uses metadataTotal so it stays accurate across both loading phases.
+        // ETA covers both loading phases (500 initial + 350 sample if capped).
         const elapsedSec = (Date.now() - startTime) / 1000
         if (elapsedSec > 0.3) {
           const rate = allMsgs.length / elapsedSec
-          const remaining = metadataTotal - allMsgs.length
-          setEta(Math.ceil(remaining / rate))
+          setEta(Math.ceil((metadataTotal - allMsgs.length) / rate))
         }
 
         if (i + BATCH_SIZE < ids.length) {
@@ -301,16 +335,17 @@ export default function SearchTab({ onAuthError, onAction }) {
         }
       }
 
-      setEmails(allMsgs)
       const scannedBytes = allMsgs.reduce((sum, m) => sum + (m.sizeEstimate || 0), 0)
 
       if (capped) {
-        // Phase 3: count all IDs — bar holds at 500/850 while this runs.
+        // Phases 3+4: count every match, then sample for a size estimate.
+        // All 500 rows are already on screen; the strip just changes label.
+        setSearchRun({ stage: 'estimating' })
         setEta(null)
         const allIds = await getAllIds(token, query)
+        if (searchCancelledRef.current) { finishPartial(); return }
         const total = allIds.length
 
-        // Phase 4: stratified sample — bar continues from 500 → 850.
         const step = Math.max(1, Math.floor(total / SAMPLE_SIZE))
         const sampleIds = []
         for (let i = 0; i < total && sampleIds.length < SAMPLE_SIZE; i += step) {
@@ -319,10 +354,10 @@ export default function SearchTab({ onAuthError, onAction }) {
 
         const sampleMsgs = []
         for (let i = 0; i < sampleIds.length; i += BATCH_SIZE) {
+          if (searchCancelledRef.current) { finishPartial(); return }
           const batch = sampleIds.slice(i, i + BATCH_SIZE)
           const results = await Promise.all(batch.map((id) => getMessageMetadata(token, id)))
           sampleMsgs.push(...results)
-          setProgress({ loaded: ids.length + sampleMsgs.length, total: metadataTotal })
           if (i + BATCH_SIZE < sampleIds.length) {
             await new Promise((r) => setTimeout(r, BATCH_DELAY_MS))
           }
@@ -348,20 +383,22 @@ export default function SearchTab({ onAuthError, onAction }) {
           }
         }
       }
-
-      setPhase('results')
     } catch (err) {
       handleGmailError(err)
-      setPhase('form')
+      if (allMsgs.length > 0) finishPartial() // keep what already streamed in
+      else setPhase('form')
     } finally {
       setLoading(false)
-      setSearchPhase(null)
+      setSearchRun(null)
       setEta(null)
     }
   }
 
   // "Edit" on the results screen — back to the form with the fields intact.
+  // Also stops a still-running search so its loop doesn't keep mutating
+  // state behind the form.
   function editFilters() {
+    searchCancelledRef.current = true
     setPhase('form')
     setActivePreset(null)
     setSelected(new Set())
@@ -612,18 +649,22 @@ export default function SearchTab({ onAuthError, onAction }) {
   const matchMb = totalSize !== null ? formatSize(totalSize) : null
 
   return (
-    <div className="h-full relative">
-      {/* the one scroll container — bottom padding leaves room for the
-          floating bulk bar so it never hides the last rows */}
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="h-full overflow-y-auto select-none"
-        style={{ padding: '12px 14px 96px' }}
-      >
+    // Column layout: the scroll area takes whatever height the bulk bar
+    // below doesn't — so when the bar appears, scrolling (and drag-select
+    // auto-scroll, which keys off the scroll box's bottom edge) ends at the
+    // bar's top instead of continuing on underneath it.
+    <div className="h-full flex flex-col">
+      <div className="relative flex-1 min-h-0">
+        {/* the one scroll container for all phases */}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="h-full overflow-y-auto select-none"
+          style={{ padding: '12px 14px 24px' }}
+        >
         {/* ============ FORM PHASE ============ */}
         {phase === 'form' && (
-          <div style={{ animation: 'gcInL .22s ease' }}>
+          <div style={{ animation: phaseAnim || undefined }}>
             <p style={{ margin: '2px 2px 12px', fontSize: 12, color: 'var(--sub)' }}>
               Filter by size, age, or sender, then trash or archive the matches in bulk.
               Nothing is removed without confirmation.
@@ -668,43 +709,24 @@ export default function SearchTab({ onAuthError, onAction }) {
 
               {/* Search — submits the filter form above via the `form`
                   attribute, so pressing Enter in a field works too */}
-              <button
+              <PrimaryButton
                 type="submit"
                 form="search-filters-form"
                 disabled={loading || acting}
-                className="gc-btn gc-btn-primary w-full"
+                className="w-full"
                 style={{ marginTop: 2 }}
               >
-                <span>Search</span>
-              </button>
-              <div style={{ fontSize: 11, color: 'var(--faint)', textAlign: 'center' }}>
-                Searching changes nothing — you choose what to remove.
-              </div>
+                Search
+              </PrimaryButton>
 
               {status && <p style={{ fontSize: 11, color: 'var(--sub)' }}>{status}</p>}
             </div>
           </div>
         )}
 
-        {/* ============ BUSY PHASE ============ */}
-        {phase === 'busy' && (
-          <div style={{ animation: 'gcInL .22s ease' }}>
-            <BusyCard
-              title="Searching your mail…"
-              caption={filterSummary}
-              progress={searchPhase === 'loading-metadata' ? progress : null}
-              extra={eta !== null && eta > 0 && (
-                <div style={{ fontSize: 11, color: 'var(--faint)', textAlign: 'right', marginTop: 6 }}>
-                  ~{eta}s left
-                </div>
-              )}
-            />
-          </div>
-        )}
-
-        {/* ============ RESULTS PHASE ============ */}
+        {/* ============ RESULTS PHASE (streams in live while searching) ============ */}
         {phase === 'results' && (
-          <div style={{ animation: 'gcInL .22s ease' }}>
+          <div style={{ animation: phaseAnim || undefined }}>
             {/* what was searched + a way back to the form */}
             <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 10 }}>
               <span style={{ fontSize: 11, color: 'var(--sub)', background: 'var(--chip)', borderRadius: 999, padding: '4px 10px' }}>
@@ -713,27 +735,43 @@ export default function SearchTab({ onAuthError, onAction }) {
               <button onClick={editFilters} className="gc-link" style={{ padding: '4px 2px' }}>Edit</button>
             </div>
 
-            {/* Match summary card */}
+            {/* While the search streams: slim sticky progress strip. Once it
+                completes (or is stopped): the match summary card. */}
+            {searchRun ? (
+              <ProgressStrip
+                title={searchRun.stage === 'estimating' ? 'Counting all matches…' : 'Searching your mail…'}
+                detail={`${emails.length.toLocaleString()} found so far${eta !== null && eta > 0 ? ` · ~${eta}s left` : ''}`}
+                onStop={() => { searchCancelledRef.current = true }}
+              />
+            ) : (
             <div className="gc-card" style={{ padding: 12, marginBottom: 12 }}>
               <div className="flex items-baseline gap-1.5">
                 <span style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.01em' }}>
                   {(matchTotal ?? emails.length).toLocaleString()}
                 </span>
-                <span style={{ fontSize: 12, color: 'var(--sub)' }}>matching emails</span>
+                <span style={{ fontSize: 12, color: 'var(--sub)' }}>
+                  {stoppedEarly ? 'matches so far' : 'matching emails'}
+                </span>
                 {matchMb !== null && (
                   <span className="ml-auto" style={{ fontWeight: 600, color: 'var(--accent)', fontSize: '12.5px' }}>
                     ~{matchMb}
                   </span>
                 )}
               </div>
-              {sizeIsEstimate && (
+              {stoppedEarly && (
+                <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>
+                  Stopped early — showing what was found before you stopped. Search again for the full list.
+                </div>
+              )}
+              {!stoppedEarly && sizeIsEstimate && (
                 <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>
                   Showing the first 500 · sizes are estimates
                 </div>
               )}
 
-              {/* Trash-all — or its live progress while the loop runs */}
-              {(matchTotal ?? 0) > 0 && !taRun && (
+              {/* Trash-all — hidden after an early stop, since "all matching"
+                  could cover more than what's on screen */}
+              {!stoppedEarly && (matchTotal ?? 0) > 0 && !taRun && (
                 <button
                   onClick={requestTrashAll}
                   disabled={acting}
@@ -764,6 +802,7 @@ export default function SearchTab({ onAuthError, onAction }) {
                 </div>
               )}
             </div>
+            )}
 
             {status && <p style={{ fontSize: 11, color: 'var(--sub)', margin: '0 2px 10px' }}>{status}</p>}
 
@@ -818,7 +857,7 @@ export default function SearchTab({ onAuthError, onAction }) {
                     <div
                       key={msg.id}
                       data-msg-id={msg.id}
-                      className="flex items-stretch gap-2"
+                      className="flex items-stretch gap-2 gc-row-in"
                       style={{ margin: '0 0 6px' }}
                       onMouseEnter={() => selectDragOver(msg.id)}
                     >
@@ -869,7 +908,7 @@ export default function SearchTab({ onAuthError, onAction }) {
                 })}
               </>
             ) : (
-              !taRun && (
+              !taRun && !searchRun && (
                 <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--faint)', fontSize: 12 }}>
                   Nothing left matching these filters.<br /><br />Your mailbox is that much lighter.
                 </div>
@@ -879,31 +918,33 @@ export default function SearchTab({ onAuthError, onAction }) {
         )}
       </div>
 
-      {/* Back to top — floats over the scroll box once it's scrolled a bit */}
-      {showBackToTop && (
-        <button
-          onClick={scrollToTop}
-          title="Back to top"
-          className="absolute grid place-items-center cursor-pointer z-10"
-          style={{
-            bottom: 16, right: 16, width: 32, height: 32, borderRadius: 999,
-            border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--ink)',
-            boxShadow: 'var(--shadow-dd)',
-          }}
-        >
-          ↑
-        </button>
-      )}
+        {/* Back to top — floats over the scroll box once it's scrolled a bit */}
+        {showBackToTop && (
+          <button
+            onClick={scrollToTop}
+            title="Back to top"
+            className="absolute grid place-items-center cursor-pointer z-10"
+            style={{
+              bottom: 16, right: 16, width: 32, height: 32, borderRadius: 999,
+              border: '1px solid var(--line)', background: 'var(--card)', color: 'var(--ink)',
+              boxShadow: 'var(--shadow-dd)',
+            }}
+          >
+            ↑
+          </button>
+        )}
+      </div>
 
-      {/* Floating bulk-action bar — rises from the bottom while emails are selected */}
+      {/* Bulk-action bar — rises below the scroll area while emails are selected */}
       {phase === 'results' && selected.size > 0 && !confirm && !taRun && (
         <BulkBar
           label={`${selected.size} selected · ~${formatSize(selectedBytes)}`}
           onClear={selectNone}
+          hint={searchRun ? 'Finishing search… actions unlock when it completes.' : undefined}
         >
           <button
             onClick={() => requestAction('trash')}
-            disabled={acting}
+            disabled={acting || !!searchRun}
             className="gc-btn gc-btn-danger"
             style={{ flex: 1.2, padding: 9, fontSize: '12.5px' }}
           >
@@ -911,7 +952,7 @@ export default function SearchTab({ onAuthError, onAction }) {
           </button>
           <button
             onClick={() => requestAction('archive')}
-            disabled={acting}
+            disabled={acting || !!searchRun}
             className="gc-btn gc-btn-neutral flex-1"
             style={{ padding: 9, fontSize: '12.5px' }}
           >

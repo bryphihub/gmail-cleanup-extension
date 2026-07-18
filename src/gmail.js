@@ -163,10 +163,14 @@ export async function listAllMessageIds(token, query, maxTotal = 500) {
 //
 // `options.scope` — 'inbox' (default) searches in:inbox only; 'all' searches every
 //   message (in:anywhere), including everything outside the inbox.
+// `options.isCancelled` — optional function checked between batches; when it
+//   returns true the scan stops early and returns whatever it has so far
+//   (a valid partial result), instead of throwing.
 // `onProgress(loaded, total)` — drives the progress bar (total is 0 while still counting IDs).
 // `onUpdate(results)` — called after every batch with the current live (partial) results.
 export async function scanSenders(token, options = {}, onProgress, onUpdate) {
-  const { scope = 'inbox' } = options
+  const { scope = 'inbox', isCancelled } = options
+  const cancelled = () => !!(isCancelled && isCancelled())
   const query = scope === 'all' ? 'in:anywhere' : 'in:inbox'
 
   if (onProgress) onProgress(0, 0)
@@ -218,6 +222,7 @@ export async function scanSenders(token, options = {}, onProgress, onUpdate) {
   const failedIds = []
 
   for (let i = 0; i < allIds.length; i += 20) {
+    if (cancelled()) return messages // stopped early — partial result
     const batchA = allIds.slice(i, i + 10)
     const batchB = allIds.slice(i + 10, i + 20)
 
@@ -245,6 +250,7 @@ export async function scanSenders(token, options = {}, onProgress, onUpdate) {
   // Retry pass for anything that failed mid-scan (usually transient rate limits).
   if (failedIds.length > 0) {
     for (let i = 0; i < failedIds.length; i += 10) {
+      if (cancelled()) return messages
       const batch = failedIds.slice(i, i + 10)
       const results = await fetchBatch(batch)
 
