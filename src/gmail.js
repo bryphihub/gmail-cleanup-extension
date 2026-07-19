@@ -89,11 +89,12 @@ export async function estimateMessageCount(token, query) {
 // Uses fetchWithRetry so rate limits (429) are handled automatically.
 // Calls onProgress(count) after each page so the UI can show a live counter.
 // Returns the full array of IDs (count = ids.length).
-export async function getAllIds(token, query, onProgress) {
+export async function getAllIds(token, query, onProgress, isCancelled) {
   const ids = []
   let pageToken = undefined
 
   while (true) {
+    if (isCancelled?.()) break
     const params = new URLSearchParams({ q: query, maxResults: '500' })
     if (pageToken) params.set('pageToken', pageToken)
 
@@ -330,19 +331,32 @@ export async function attemptUnsubscribe(token, unsubHeader) {
 // Trashes all emails from a specific sender.
 // Fetches every matching ID first, then deletes in batches of 10.
 // Calls onProgress(deleted, total) after each batch.
-// Returns { count, ids } — `ids` is every message that was actually trashed
-// successfully, so callers can support Undo (via untrashMessage) afterward.
-export async function trashAllFromSender(token, senderEmail, onProgress) {
-  const ids = await getAllIds(token, `from:${senderEmail}`)
+// Returns { count, ids, total, authFailed, cancelled } — `ids` is every
+// message actually trashed successfully, so callers can support Undo and
+// restore only untouched local rows after a stop or failure.
+export async function trashAllFromSender(token, senderEmail, onProgress, isCancelled) {
+  const ids = await getAllIds(token, `from:${senderEmail}`, undefined, isCancelled)
   const trashedIds = []
+  let authFailed = false
   for (let i = 0; i < ids.length; i += 10) {
+    if (isCancelled?.()) break
     const batch = ids.slice(i, i + 10)
     const results = await Promise.allSettled(batch.map((id) => trashMessage(token, id)))
-    batch.forEach((id, j) => { if (results[j].status === 'fulfilled') trashedIds.push(id) })
+    batch.forEach((id, j) => {
+      if (results[j].status === 'fulfilled') trashedIds.push(id)
+      else if (results[j].reason instanceof GmailAuthError) authFailed = true
+    })
     if (onProgress) onProgress(i + batch.length, ids.length)
+    if (authFailed) break
     if (i + 10 < ids.length) await sleep(300)
   }
-  return { count: trashedIds.length, ids: trashedIds }
+  return {
+    count: trashedIds.length,
+    ids: trashedIds,
+    total: ids.length,
+    authFailed,
+    cancelled: !!isCancelled?.(),
+  }
 }
 
 // Moves a single message to Trash.

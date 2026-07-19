@@ -19,7 +19,7 @@ import {
 } from './gmail.js'
 import { formatSize, parseSenderName, dragScrollSpeed } from './utils.js'
 import { PRESETS } from './presets.js'
-import FilterPanel, { buildQuery, DEFAULT_FILTERS, summarizeFilters } from './FilterPanel.jsx'
+import FilterPanel, { buildQuery, DEFAULT_FILTERS } from './FilterPanel.jsx'
 import { Dropdown, ConfirmSheet, Rail, BulkBar, PrimaryButton, ProgressStrip } from './ui.jsx'
 
 const SORT_OPTIONS = [
@@ -32,10 +32,10 @@ const SORT_OPTIONS = [
 
 // `onAuthError` is called whenever a Gmail action fails because the token has
 // expired or been revoked — App.jsx uses it to show a "Reconnect Gmail"
-// banner above both tabs. `onAction` reports a completed Trash/Archive so
-// App.jsx can pop up a shared "Undo" toast at the bottom of the panel —
+// banner above both tabs. `onAction` publishes Trash/Archive immediately so
+// App.jsx can show a shared Undo toast while background batches are running —
 // the Undo control itself lives there, not in this tab.
-export default function SearchTab({ onAuthError, onAction }) {
+export default function SearchTab({ onAuthError, onAction, enqueueBackgroundAction }) {
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   function handleFilterChange(key, value) {
     setFilters((prev) => ({ ...prev, [key]: value }))
@@ -83,9 +83,6 @@ export default function SearchTab({ onAuthError, onAction }) {
   // onConfirm }. Every destructive action goes through this before firing.
   const [confirm, setConfirm] = useState(null)
 
-  // True while a trash/archive operation is in progress.
-  const [acting, setActing] = useState(false)
-
   // Live-search state: null when idle, or { stage: 'searching' | 'estimating' }
   // while a search is streaming. The results list renders underneath the
   // sticky progress strip and rows appear batch by batch as they load.
@@ -97,13 +94,6 @@ export default function SearchTab({ onAuthError, onAction }) {
   // Checked between batches so Stop can halt the search loops mid-run.
   const searchCancelledRef = useRef(false)
   const [eta, setEta] = useState(null) // seconds remaining, null = unknown
-
-  // Trash-all run state: null, or { done, total } while the loop is running —
-  // drives the red progress bar + Stop button in the summary card.
-  const [taRun, setTaRun] = useState(null)
-  // `cancelledRef` is a flag the loop checks so Stop halts it mid-run.
-  // A ref (not state) because it updates instantly without re-rendering.
-  const cancelledRef = useRef(false)
 
   // Shared by every catch block below: tells the difference between "your
   // Gmail login is no longer valid" (show Reconnect above, via onAuthError)
@@ -225,10 +215,6 @@ export default function SearchTab({ onAuthError, onAction }) {
 
   const selectedEmails = emails.filter((m) => selected.has(m.id))
   const selectedBytes = selectedEmails.reduce((sum, m) => sum + (m.sizeEstimate || 0), 0)
-
-  // Human summary of what was (or is being) searched — the chip over the
-  // results and the caption on the busy card.
-  const filterSummary = activePreset ? `Preset: ${activePreset}` : summarizeFilters(filters)
 
   // --- Find emails ---
 
@@ -430,90 +416,120 @@ export default function SearchTab({ onAuthError, onAction }) {
     }
   }
 
-  // Batches requests (10 at a time) to avoid rate limits, and updates
-  // the list progressively as emails are successfully actioned.
-  async function runBulkAction(type) {
+  // Removes selected rows immediately, then hands the slower Gmail calls to
+  // App's serial background queue. The queue does not block this tab, so the
+  // person can keep searching, selecting, scrolling, or switch tabs.
+  function runBulkAction(type) {
     setConfirm(null)
-    setActing(true)
     setStatus('')
-    // Snapshot of the full email objects before any of them get filtered out
-    // of `emails` below — Undo needs the whole objects (not just IDs) to put
-    // rows back on screen exactly as they were.
-    const emailsSnapshot = emails
+    const ids = [...selected]
+    if (ids.length === 0) return
 
-    try {
-      const token = await getToken(false)
-      const ids = [...selected]
-      const apiFn = type === 'trash' ? trashMessage : archiveMessage
+    const idSet = new Set(ids)
+    const removedMsgs = emails.filter((m) => idSet.has(m.id))
+    const removedBytes = removedMsgs.reduce((sum, m) => sum + (m.sizeEstimate || 0), 0)
+    const actionQuery = lastQueryRef.current
 
-      const BATCH_SIZE = 10
-      const BATCH_DELAY_MS = 300
-      const succeeded = []
-      const failed = []
+    // Optimistic UI: the rows and their summary totals change before the
+    // first network request. Cached presets are invalidated so old rows
+    // cannot pop back in when switching between presets.
+    setEmails((prev) => prev.filter((m) => !idSet.has(m.id)))
+    setSelected(new Set())
+    setMatchTotal((prev) => (prev === null ? prev : Math.max(0, prev - removedMsgs.length)))
+    setTotalSize((prev) => (prev === null ? prev : Math.max(0, prev - removedBytes)))
+    presetCacheRef.current = {}
 
-      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-        const batch = ids.slice(i, i + BATCH_SIZE)
-        const results = await Promise.allSettled(
-          batch.map((id) => apiFn(token, id))
-        )
-
-        batch.forEach((id, j) => {
-          if (results[j].status === 'fulfilled') {
-            succeeded.push(id)
-          } else {
-            failed.push(id)
-          }
-        })
-
-        // Remove succeeded emails from the list as we go
-        const succeededSet = new Set(succeeded)
-        setEmails((prev) => prev.filter((m) => !succeededSet.has(m.id)))
-
-        // Keep only failed emails selected so the user can retry them
-        setSelected(new Set(failed))
-
-        if (i + BATCH_SIZE < ids.length) {
-          setStatus(`Processing ${Math.min(i + BATCH_SIZE, ids.length)} / ${ids.length}...`)
-          await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS))
-        }
-      }
-
-      const succeededSet = new Set(succeeded)
-      const removedMsgs = emailsSnapshot.filter((m) => succeededSet.has(m.id))
-      const removedBytes = removedMsgs.reduce((sum, m) => sum + (m.sizeEstimate || 0), 0)
-
-      // Keep the summary card's numbers in step with what just left the list.
-      setMatchTotal((prev) => (prev === null ? prev : Math.max(0, prev - succeeded.length)))
-      setTotalSize((prev) => (prev === null ? prev : Math.max(0, prev - removedBytes)))
-
-      if (failed.length === 0) {
-        setStatus('')
-      } else {
-        const verb = type === 'trash' ? 'moved to Trash' : 'archived'
-        setStatus(`${succeeded.length} ${verb}, ${failed.length} failed — they're still selected, try again.`)
-      }
-
-      // Restore function passed up to App.jsx's Undo toast — run only after
-      // it's confirmed the Gmail-side untrash/restore actually succeeded.
-      // Puts the removed rows back at the top of the list (and back into the
-      // summary numbers) rather than re-searching, so Undo feels instant.
-      onAction?.(type, succeeded, () => {
-        setEmails((prev) => {
-          const existingIds = new Set(prev.map((m) => m.id))
-          const toAdd = removedMsgs.filter((m) => !existingIds.has(m.id))
-          return [...toAdd, ...prev]
-        })
-        // Counts are adjusted out here, NOT inside the setEmails updater
-        // above — React calls updater functions twice in dev to catch
-        // impure ones, so a nested setState there double-counts.
-        setMatchTotal((t) => (t === null ? t : t + removedMsgs.length))
-        setTotalSize((s) => (s === null ? s : s + removedBytes))
+    // A row may be restored once because Gmail rejected it, then encountered
+    // again if the person presses Undo. Track restored IDs so counts and sizes
+    // never get added twice.
+    const restoredIds = new Set()
+    const restoreRows = (records) => {
+      // Do not mix rows from an old query into a newer search the person
+      // started while this background job was running.
+      if (records.length === 0 || lastQueryRef.current !== actionQuery) return
+      const freshRecords = records.filter((m) => !restoredIds.has(m.id))
+      if (freshRecords.length === 0) return
+      freshRecords.forEach((m) => restoredIds.add(m.id))
+      const bytes = freshRecords.reduce((sum, m) => sum + (m.sizeEstimate || 0), 0)
+      setEmails((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id))
+        return [...freshRecords.filter((m) => !existingIds.has(m.id)), ...prev]
       })
-    } catch (err) {
-      handleGmailError(err)
-    } finally {
-      setActing(false)
+      setMatchTotal((prev) => (prev === null ? prev : prev + freshRecords.length))
+      setTotalSize((prev) => (prev === null ? prev : prev + bytes))
     }
+
+    // Undo is offered immediately, before the first Gmail batch finishes.
+    // If clicked, it cancels untouched batches and waits only for the current
+    // in-flight batch so App can reverse the IDs that actually reached Gmail.
+    const succeeded = []
+    let undoRequested = false
+    let resolveJob
+    const jobDone = new Promise((resolve) => { resolveJob = resolve })
+
+    const cancelJob = enqueueBackgroundAction({
+      onCancel: () => {
+        if (!undoRequested) restoreRows(removedMsgs)
+        resolveJob([...succeeded])
+      },
+      run: async ({ isCancelled }) => {
+        const succeededSet = new Set()
+        let authFailed = false
+
+        try {
+          const token = await getToken(false)
+          const apiFn = type === 'trash' ? trashMessage : archiveMessage
+
+          for (let i = 0; i < ids.length; i += 10) {
+            if (isCancelled()) break
+            const batch = ids.slice(i, i + 10)
+            const results = await Promise.allSettled(batch.map((id) => apiFn(token, id)))
+
+            results.forEach((result, index) => {
+              if (result.status === 'fulfilled') {
+                const id = batch[index]
+                succeeded.push(id)
+                succeededSet.add(id)
+              } else if (result.reason instanceof GmailAuthError) {
+                authFailed = true
+              }
+            })
+
+            if (authFailed || isCancelled()) break
+            if (i + 10 < ids.length) await new Promise((resolve) => setTimeout(resolve, 300))
+          }
+        } catch (err) {
+          if (err instanceof GmailAuthError) authFailed = true
+          else if (!isCancelled()) setStatus(`Error processing emails: ${err.message}`)
+        } finally {
+          const failedMsgs = removedMsgs.filter((m) => !succeededSet.has(m.id))
+          restoreRows(failedMsgs)
+
+          if (authFailed) {
+            onAuthError?.()
+            setStatus('Your Gmail connection expired — the emails not processed were restored.')
+          } else if (!isCancelled() && failedMsgs.length > 0) {
+            setStatus(`${failedMsgs.length} email${failedMsgs.length !== 1 ? 's were' : ' was'} not processed and restored.`)
+          }
+
+          resolveJob([...succeeded])
+        }
+      },
+    })
+
+    onAction?.(
+      type,
+      ids,
+      () => restoreRows(removedMsgs),
+      {
+        count: ids.length,
+        prepareUndo: async () => {
+          undoRequested = true
+          cancelJob()
+          return jobDone
+        },
+      }
+    )
   }
 
   // --- Trash all matching ---
@@ -524,69 +540,139 @@ export default function SearchTab({ onAuthError, onAction }) {
     const n = matchTotal || 0
     setConfirm({
       title: `Move all ${n.toLocaleString()} matching emails to Trash?`,
-      body: 'Includes matches beyond the 500 shown here. This keeps running until nothing matches — you can stop it mid-way, and undo it right after. Trashed mail stays in Trash for 30 days.',
+      body: 'Includes matches beyond the 500 shown here. It runs quietly while you keep browsing, with Undo available immediately. Trashed mail stays in Trash for 30 days.',
       cta: 'Move all to Trash',
       danger: true,
       onConfirm: runTrashAll,
     })
   }
 
-  // The confirmed loop: keeps searching and trashing until nothing matches
-  // (or Stop is clicked), with live progress in the summary card.
-  async function runTrashAll() {
+  // Optimistically clears the result set, then keeps finding and trashing
+  // matches in App's serial queue. It remains cancellable when the panel is
+  // hidden, but intentionally has no progress UI so browsing stays quiet.
+  function runTrashAll() {
     setConfirm(null)
     const query = lastQueryRef.current
     const total = matchTotal || 0
-    setActing(true)
+    const originalEmails = emails
+    const originalTotalSize = totalSize
     setEmails([])
     setSelected(new Set())
-    cancelledRef.current = false
-    setTaRun({ done: 0, total })
+    setMatchTotal(0)
+    setTotalSize(0)
+    setStatus('')
+    presetCacheRef.current = {}
 
-    let totalTrashed = 0
-    const trashedIds = [] // tracked so the whole run can be undone afterward
-
-    try {
-      const token = await getToken(false)
-
-      while (!cancelledRef.current) {
-        const { ids } = await listAllMessageIds(token, query)
-        if (ids.length === 0) break // nothing left matching the filters — done
-
-        // Trash in batches of 10 with short pauses to avoid rate limits.
-        for (let i = 0; i < ids.length; i += 10) {
-          if (cancelledRef.current) break
-
-          const batch = ids.slice(i, i + 10)
-          const results = await Promise.allSettled(batch.map((id) => trashMessage(token, id)))
-          batch.forEach((id, j) => { if (results[j].status === 'fulfilled') trashedIds.push(id) })
-          totalTrashed += batch.length
-          setTaRun({ done: Math.min(totalTrashed, total || totalTrashed), total: Math.max(total, totalTrashed) })
-
-          if (i + 10 < ids.length) {
-            await new Promise((r) => setTimeout(r, 300))
-          }
-        }
-      }
-
-      setMatchTotal(cancelledRef.current ? Math.max(0, total - totalTrashed) : 0)
-      setTotalSize((prev) => (cancelledRef.current && prev !== null && total > 0
-        ? Math.round(prev * (1 - totalTrashed / total))
-        : 0))
-      setStatus(cancelledRef.current ? `Stopped — ${totalTrashed.toLocaleString()} emails moved to Trash.` : '')
-      onAction?.('trash', trashedIds)
-    } catch (err) {
-      onAction?.('trash', trashedIds) // whatever succeeded before the error is still undoable
-      if (err instanceof GmailAuthError) {
-        onAuthError?.()
-        setStatus(`Your Gmail connection expired after trashing ${totalTrashed} — click "Reconnect Gmail" above to continue.`)
-      } else {
-        setStatus(`Error after trashing ${totalTrashed}: ${err.message}`)
-      }
-    } finally {
-      setActing(false)
-      setTaRun(null)
+    const restoreAll = () => {
+      if (lastQueryRef.current !== query) return
+      setEmails(originalEmails)
+      setMatchTotal(total)
+      setTotalSize(originalTotalSize)
     }
+
+    const restoreUnprocessed = (succeededIds = []) => {
+      if (lastQueryRef.current !== query) return
+      const succeededSet = new Set(succeededIds)
+      const remainingRows = originalEmails.filter((m) => !succeededSet.has(m.id))
+      const remaining = Math.max(0, total - succeededIds.length)
+      setEmails(remainingRows)
+      setMatchTotal(remaining)
+      setTotalSize(originalTotalSize === null || total === 0
+        ? originalTotalSize
+        : Math.round(originalTotalSize * (remaining / total)))
+    }
+
+    const trashedIds = []
+    const trashedSet = new Set()
+    let undoRequested = false
+    let resolveJob
+    const jobDone = new Promise((resolve) => { resolveJob = resolve })
+
+    const cancelJob = enqueueBackgroundAction({
+      onCancel: () => {
+        if (!undoRequested) restoreUnprocessed()
+        resolveJob([...trashedIds])
+      },
+      run: async ({ isCancelled }) => {
+        let authFailed = false
+        let errorMessage = ''
+        let completedNormally = false
+
+        try {
+          try {
+            const token = await getToken(false)
+
+            while (!isCancelled()) {
+              const { ids } = await listAllMessageIds(token, query)
+              if (ids.length === 0) {
+                completedNormally = true
+                break
+              }
+
+              let succeededThisPass = 0
+              for (let i = 0; i < ids.length; i += 10) {
+                if (isCancelled()) break
+                const batch = ids.slice(i, i + 10)
+                const results = await Promise.allSettled(batch.map((id) => trashMessage(token, id)))
+
+                results.forEach((result, index) => {
+                  if (result.status === 'fulfilled') {
+                    const id = batch[index]
+                    if (!trashedSet.has(id)) {
+                      trashedSet.add(id)
+                      trashedIds.push(id)
+                      succeededThisPass++
+                    }
+                  } else if (result.reason instanceof GmailAuthError) {
+                    authFailed = true
+                  }
+                })
+
+                if (authFailed || isCancelled()) break
+                if (i + 10 < ids.length) await new Promise((resolve) => setTimeout(resolve, 300))
+              }
+
+              // Avoid endlessly re-querying IDs Gmail repeatedly refused.
+              if (authFailed || succeededThisPass === 0) break
+            }
+          } catch (err) {
+            if (err instanceof GmailAuthError) authFailed = true
+            else errorMessage = err.message
+          }
+
+          // Gmail's resultSizeEstimate can be a little high or low. Reaching an
+          // empty result page is the reliable completion signal; comparing the
+          // processed count with the estimate can incorrectly restore stale rows.
+          const incomplete = !completedNormally
+          if (incomplete && !undoRequested) restoreUnprocessed(trashedIds)
+
+          if (authFailed) {
+            onAuthError?.()
+            setStatus('Your Gmail connection expired — unprocessed matches were restored.')
+          } else if (errorMessage) {
+            setStatus(`Some emails were not processed and were restored: ${errorMessage}`)
+          } else if (!isCancelled() && !completedNormally) {
+            setStatus('Some emails could not be moved to Trash and were restored.')
+          }
+        } finally {
+          resolveJob([...trashedIds])
+        }
+      },
+    })
+
+    onAction?.(
+      'trash',
+      [],
+      restoreAll,
+      {
+        count: total,
+        prepareUndo: async () => {
+          undoRequested = true
+          cancelJob()
+          return jobDone
+        },
+      }
+    )
   }
 
   // --- Sender grouping ---
@@ -648,6 +734,44 @@ export default function SearchTab({ onAuthError, onAction }) {
 
   const matchMb = totalSize !== null ? formatSize(totalSize) : null
 
+  // Quick presets card — rendered in BOTH the form and the results view, so
+  // the block never disappears and it's always clear which preset (if any)
+  // is active. In results it gains a corner link that returns to the form:
+  // "Remove" when a preset drove the results, "Edit filters" when a manual
+  // filter search did. The preset buttons stay clickable in results too, so
+  // switching between presets is one click.
+  const presetsCard = (inResults) => (
+    <div className="gc-card" style={{ padding: 12, marginBottom: inResults ? 12 : 14 }}>
+      <div className="flex items-center" style={{ marginBottom: inResults ? 10 : 2 }}>
+        <span style={{ fontWeight: 600, fontSize: 12 }}>Quick presets</span>
+        {inResults && (
+          <button onClick={editFilters} className="gc-link ml-auto" style={{ fontSize: 11 }}>
+            {activePreset ? 'Remove' : 'Edit search'}
+          </button>
+        )}
+      </div>
+      {!inResults && (
+        <div style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 10 }}>
+          One-click searches ignore the filters below.
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-1.5">
+        {PRESETS.map((preset) => (
+          <button
+            key={preset.label}
+            onClick={() => runPreset(preset)}
+            disabled={loading}
+            title={preset.description}
+            className="gc-preset"
+            data-active={activePreset === preset.label}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
   return (
     // Column layout: the scroll area takes whatever height the bulk bar
     // below doesn't — so when the bar appears, scrolling (and drag-select
@@ -671,25 +795,7 @@ export default function SearchTab({ onAuthError, onAction }) {
             </p>
 
             {/* Quick presets — one-click searches with their own fixed queries */}
-            <div className="gc-card" style={{ padding: 12, marginBottom: 14 }}>
-              <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 2 }}>Quick presets</div>
-              <div style={{ fontSize: 11, color: 'var(--faint)', marginBottom: 10 }}>
-                One-click searches ignore the filters below.
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {PRESETS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    onClick={() => runPreset(preset)}
-                    disabled={loading || acting}
-                    title={preset.description}
-                    className="gc-preset"
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {presetsCard(false)}
 
             {/* Divider makes clear the filters below are a separate way to search */}
             <div className="flex items-center gap-2.5" style={{ margin: '0 0 12px', color: 'var(--faint)', fontSize: 11 }}>
@@ -703,7 +809,7 @@ export default function SearchTab({ onAuthError, onAction }) {
                 filters={filters}
                 onChange={handleFilterChange}
                 onSubmit={() => handleFind(buildQuery(filters))}
-                loading={loading || acting}
+                loading={loading}
                 formId="search-filters-form"
               />
 
@@ -712,7 +818,7 @@ export default function SearchTab({ onAuthError, onAction }) {
               <PrimaryButton
                 type="submit"
                 form="search-filters-form"
-                disabled={loading || acting}
+                disabled={loading}
                 className="w-full"
                 style={{ marginTop: 2 }}
               >
@@ -727,13 +833,9 @@ export default function SearchTab({ onAuthError, onAction }) {
         {/* ============ RESULTS PHASE (streams in live while searching) ============ */}
         {phase === 'results' && (
           <div style={{ animation: phaseAnim || undefined }}>
-            {/* what was searched + a way back to the form */}
-            <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 10 }}>
-              <span style={{ fontSize: 11, color: 'var(--sub)', background: 'var(--chip)', borderRadius: 999, padding: '4px 10px' }}>
-                {filterSummary}
-              </span>
-              <button onClick={editFilters} className="gc-link" style={{ padding: '4px 2px' }}>Edit</button>
-            </div>
+            {/* Quick presets stay visible over the results — the active one
+                highlighted, its corner link returning to the form. */}
+            {presetsCard(true)}
 
             {/* While the search streams: slim sticky progress strip. Once it
                 completes (or is stopped): the match summary card. */}
@@ -771,35 +873,14 @@ export default function SearchTab({ onAuthError, onAction }) {
 
               {/* Trash-all — hidden after an early stop, since "all matching"
                   could cover more than what's on screen */}
-              {!stoppedEarly && (matchTotal ?? 0) > 0 && !taRun && (
+              {!stoppedEarly && (matchTotal ?? 0) > 0 && (
                 <button
                   onClick={requestTrashAll}
-                  disabled={acting}
                   className="gc-btn gc-btn-danger w-full"
                   style={{ marginTop: 10, padding: 9, fontSize: 12 }}
                 >
                   Move all {(matchTotal ?? 0).toLocaleString()} to Trash…
                 </button>
-              )}
-              {taRun && (
-                <div style={{ marginTop: 10 }}>
-                  <div className="flex items-center gap-2" style={{ fontSize: 11, color: 'var(--sub)', marginBottom: 6 }}>
-                    <span>Trashing… {taRun.done.toLocaleString()} / {taRun.total.toLocaleString()}</span>
-                    <button onClick={() => { cancelledRef.current = true }} className="gc-btn-pill ml-auto" style={{ padding: '3px 12px' }}>
-                      Stop
-                    </button>
-                  </div>
-                  <div className="overflow-hidden" style={{ height: 4, borderRadius: 2, background: 'var(--chip)' }}>
-                    <div
-                      className="h-full"
-                      style={{
-                        borderRadius: 2, background: 'var(--danger-bar)',
-                        width: `${taRun.total > 0 ? Math.round((taRun.done / taRun.total) * 100) : 0}%`,
-                        transition: 'width .12s linear',
-                      }}
-                    />
-                  </div>
-                </div>
               )}
             </div>
             )}
@@ -908,7 +989,7 @@ export default function SearchTab({ onAuthError, onAction }) {
                 })}
               </>
             ) : (
-              !taRun && !searchRun && (
+              !searchRun && (
                 <div style={{ textAlign: 'center', padding: '28px 16px', color: 'var(--faint)', fontSize: 12 }}>
                   Nothing left matching these filters.<br /><br />Your mailbox is that much lighter.
                 </div>
@@ -936,7 +1017,7 @@ export default function SearchTab({ onAuthError, onAction }) {
       </div>
 
       {/* Bulk-action bar — rises below the scroll area while emails are selected */}
-      {phase === 'results' && selected.size > 0 && !confirm && !taRun && (
+      {phase === 'results' && selected.size > 0 && !confirm && (
         <BulkBar
           label={`${selected.size} selected · ~${formatSize(selectedBytes)}`}
           onClear={selectNone}
@@ -944,19 +1025,19 @@ export default function SearchTab({ onAuthError, onAction }) {
         >
           <button
             onClick={() => requestAction('trash')}
-            disabled={acting || !!searchRun}
+            disabled={!!searchRun}
             className="gc-btn gc-btn-danger"
             style={{ flex: 1.2, padding: 9, fontSize: '12.5px' }}
           >
-            {acting ? 'Working…' : 'Move to Trash…'}
+            Move to Trash…
           </button>
           <button
             onClick={() => requestAction('archive')}
-            disabled={acting || !!searchRun}
+            disabled={!!searchRun}
             className="gc-btn gc-btn-neutral flex-1"
             style={{ padding: 9, fontSize: '12.5px' }}
           >
-            {acting ? 'Working…' : 'Archive…'}
+            Archive…
           </button>
         </BulkBar>
       )}

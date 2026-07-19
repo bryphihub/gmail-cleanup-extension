@@ -14,15 +14,28 @@ import { Segmented } from './ui.jsx'
 import Onboarding from './Onboarding.jsx'
 import SearchTab from './SearchTab.jsx'
 import SendersTab from './SendersTab.jsx'
+import useBackgroundQueue from './useBackgroundQueue.js'
 
-// How long the Undo toast stays up (and how long its countdown bar takes to
-// empty). The design allows 3–15s; 10 is its default.
-const UNDO_SECONDS = 10
+// Give large background actions the longest allowed Undo window. The toast
+// appears immediately, so these 15 seconds are fully usable by the person.
+const UNDO_SECONDS = 15
 
 export default function App() {
   const [account, setAccount] = useState(null)
   const [status, setStatus] = useState('')
   const [activeTab, setActiveTab] = useState('search')
+  const { enqueueBackgroundAction, cancelBackgroundActions } = useBackgroundQueue()
+
+  // content.js keeps the iframe alive when the panel is hidden. It sends this
+  // signal first so panel-lifetime background jobs stop between Gmail batches
+  // instead of silently continuing after the person closes the UI.
+  useEffect(() => {
+    const handlePanelHidden = (event) => {
+      if (event.data?.type === 'PANEL_HIDDEN') cancelBackgroundActions()
+    }
+    window.addEventListener('message', handlePanelHidden)
+    return () => window.removeEventListener('message', handlePanelHidden)
+  }, [cancelBackgroundActions])
 
   // Boot state: false until we've checked storage for the onboarding flag
   // AND tried a silent token — prevents the onboarding welcome flashing for
@@ -48,22 +61,30 @@ export default function App() {
   // Lives here (not in each tab) so it can pop up as one consistent toast at
   // the very bottom of the whole panel, regardless of which tab the action
   // happened in. `lastAction` is null when there's nothing to undo, or
-  // { type: 'trash' | 'archive', ids } right after a Trash/Archive/Delete
-  // action — both tabs report their actions here via the onAction prop
-  // instead of showing their own Undo control. Auto-dismisses after
-  // UNDO_SECONDS, matching the countdown bar animating across the toast.
+  // { type, ids, count, ... } right after a Trash/Archive/Delete action —
+  // both tabs report actions here via onAction instead of showing separate
+  // Undo controls. Auto-dismisses after UNDO_SECONDS, matching the countdown
+  // bar animating across the toast.
   const [lastAction, setLastAction] = useState(null)
   const [undoing, setUndoing] = useState(false)
   const undoTimeoutRef = useRef(null)
 
-  // `restoreLocal` is an optional callback the reporting tab provides — once
-  // the Gmail-side untrash below actually succeeds, it puts the removed rows
-  // back into that tab's own list (so Undo visibly returns them, not just
-  // reverses things silently on Gmail's side).
-  function rememberUndo(type, ids, restoreLocal) {
-    if (!ids || ids.length === 0) return
+  // `restoreLocal` puts removed rows back into the reporting tab. Background
+  // jobs may additionally provide `prepareUndo`: App restores the rows first,
+  // then that callback cancels untouched batches and returns only the IDs that
+  // actually reached Gmail and therefore need an API-side reversal.
+  function rememberUndo(type, ids = [], restoreLocal, options = {}) {
+    const count = options.count ?? ids.length
+    if (count === 0) return
     if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
-    setLastAction({ type, ids, restoreLocal, at: Date.now() })
+    setLastAction({
+      type,
+      ids,
+      count,
+      restoreLocal,
+      prepareUndo: options.prepareUndo,
+      at: Date.now(),
+    })
     undoTimeoutRef.current = setTimeout(() => setLastAction(null), UNDO_SECONDS * 1000)
   }
 
@@ -74,20 +95,35 @@ export default function App() {
 
   async function handleUndo() {
     if (!lastAction) return
-    const { type, ids, restoreLocal } = lastAction
+    const { type, ids, count, restoreLocal, prepareUndo } = lastAction
     setUndoing(true)
     if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
     setLastAction(null)
     try {
-      const token = await getToken(false)
-      const apiFn = type === 'archive' ? restoreToInbox : untrashMessage
-      for (let i = 0; i < ids.length; i += 10) {
-        const batch = ids.slice(i, i + 10)
-        await Promise.allSettled(batch.map((id) => apiFn(token, id)))
-        if (i + 10 < ids.length) await new Promise((r) => setTimeout(r, 300))
+      let idsToRestore = ids
+
+      if (prepareUndo) {
+        // Re-populate the panel before waiting for an in-flight Gmail batch.
+        // This is intentionally optimistic so Undo feels immediate even for
+        // hundreds of emails.
+        restoreLocal?.()
+        idsToRestore = await prepareUndo()
       }
-      restoreLocal?.()
-      setStatus(`Undone — ${ids.length} email${ids.length !== 1 ? 's' : ''} restored.`)
+
+      if (idsToRestore.length > 0) {
+        const token = await getToken(false)
+        const apiFn = type === 'archive' ? restoreToInbox : untrashMessage
+        for (let i = 0; i < idsToRestore.length; i += 10) {
+          const batch = idsToRestore.slice(i, i + 10)
+          await Promise.allSettled(batch.map((id) => apiFn(token, id)))
+          if (i + 10 < idsToRestore.length) await new Promise((r) => setTimeout(r, 300))
+        }
+      }
+
+      // Completed (non-background) actions still wait for Gmail before their
+      // local rows return. Background actions already restored them above.
+      if (!prepareUndo) restoreLocal?.()
+      setStatus(`Undone — ${count} email${count !== 1 ? 's' : ''} restored.`)
     } catch (err) {
       if (err instanceof GmailAuthError) {
         setNeedsReconnect(true)
@@ -188,7 +224,10 @@ export default function App() {
         )}
         {/* Close button — posts a message to content.js, which hides the panel */}
         <button
-          onClick={() => window.parent.postMessage({ type: 'CLOSE_PANEL' }, '*')}
+          onClick={() => {
+            cancelBackgroundActions()
+            window.parent.postMessage({ type: 'CLOSE_PANEL' }, '*')
+          }}
           title="Close panel"
           className={`grid place-items-center border-none bg-transparent cursor-pointer p-0.5 ${account ? '' : 'ml-auto'}`}
           style={{ color: 'var(--faint)' }}
@@ -250,12 +289,20 @@ export default function App() {
                 "horizontal = tab change, vertical = phase change". */}
             <div className="flex-1 min-h-0" style={{ display: activeTab === 'search' ? 'block' : 'none' }}>
               <div className="h-full" style={{ animation: 'gcInL .22s ease' }}>
-                <SearchTab onAuthError={() => setNeedsReconnect(true)} onAction={rememberUndo} />
+                <SearchTab
+                  onAuthError={() => setNeedsReconnect(true)}
+                  onAction={rememberUndo}
+                  enqueueBackgroundAction={enqueueBackgroundAction}
+                />
               </div>
             </div>
             <div className="flex-1 min-h-0" style={{ display: activeTab === 'senders' ? 'block' : 'none' }}>
               <div className="h-full" style={{ animation: 'gcInR .22s ease' }}>
-                <SendersTab onAuthError={() => setNeedsReconnect(true)} onAction={rememberUndo} />
+                <SendersTab
+                  onAuthError={() => setNeedsReconnect(true)}
+                  onAction={rememberUndo}
+                  enqueueBackgroundAction={enqueueBackgroundAction}
+                />
               </div>
             </div>
           </div>
@@ -278,7 +325,7 @@ export default function App() {
         >
           <div className="flex items-center gap-2.5">
             <span className="flex-1 min-w-0" style={{ fontSize: 12 }}>
-              {lastAction.ids.length} email{lastAction.ids.length !== 1 ? 's' : ''}{' '}
+              {lastAction.count} email{lastAction.count !== 1 ? 's' : ''}{' '}
               {lastAction.type === 'archive' ? 'archived' : 'moved to Trash'}.
             </span>
             <button

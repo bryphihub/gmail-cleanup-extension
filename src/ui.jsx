@@ -120,27 +120,27 @@ export function Dropdown({ value, options, onChange, variant = 'field', disabled
   )
 }
 
-// PrimaryButton — the gradient CTA (Search / Scan / Connect) with the
-// design's animated WebGL glow overlay. <shader-glow> is the custom element
-// registered by shader-glow.js (loaded once in main.jsx, copied verbatim
-// from the design handoff). The glow only animates while hovered: paused
-// flips to "false" on mouseenter and back to "true" on mouseleave, and the
-// element eases its animation to a stop rather than freezing. The label
-// sits in a position:relative span so it paints above the canvas.
-export function PrimaryButton({ children, className = '', ...props }) {
-  const [hovered, setHovered] = useState(false)
+// PrimaryButton — the "soft clay shader" CTA (Search / Scan / Rescan /
+// Connect). A full-bleed animated WebGL mesh gradient (the <shader-glow>
+// custom element registered by shader-glow.js, running continuously) fills
+// the background, with soft-emboss shading layered on top: a diffuse top
+// light and a bottom depth gradient sit above the shader (z-index 1), and
+// the label rides above everything (z-index 2). All the shape/shadow styling
+// lives in .gc-btn-clay / .gc-clay-* in index.css. Pass `pill` for the small
+// Rescan variant.
+export function PrimaryButton({ children, className = '', pill = false, ...props }) {
   return (
-    <button
-      {...props}
-      className={`gc-btn gc-btn-primary ${className}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
+    <button {...props} className={`gc-btn-clay ${pill ? 'gc-clay-pill' : ''} ${className}`}>
+      {/* background fill — z-index 0 */}
       <shader-glow
-        paused={hovered ? 'false' : 'true'}
-        style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+        paused="false"
+        style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}
       />
-      <span>{children}</span>
+      {/* soft-emboss light + depth — z-index 1 */}
+      <span className="gc-clay-light" aria-hidden="true" />
+      <span className="gc-clay-depth" aria-hidden="true" />
+      {/* label — z-index 2 */}
+      <span className="gc-clay-label">{children}</span>
     </button>
   )
 }
@@ -358,6 +358,11 @@ export function ProgressStrip({ title, detail, progress, onStop }) {
   const pct = progress && progress.total > 0
     ? Math.round((progress.loaded / progress.total) * 100)
     : null
+  // A determinate run's boot phase — `progress` is provided but the total
+  // isn't known yet ("collecting the message list…") — there's nothing to
+  // stop until the count starts, so the Stop button is disabled and faded
+  // until then. (Indeterminate runs with no `progress` prop can always stop.)
+  const stopDisabled = !!progress && progress.total === 0
   return (
     <div className="sticky z-[15]" style={{ top: 0, marginBottom: 12 }}>
       <div className="gc-card" style={{ padding: '9px 12px' }}>
@@ -368,7 +373,13 @@ export function ProgressStrip({ title, detail, progress, onStop }) {
               {detail}
             </span>
           )}
-          <button onClick={onStop} className="gc-btn-pill ml-auto shrink-0" style={{ padding: '3px 12px' }}>
+          <button
+            onClick={onStop}
+            disabled={stopDisabled}
+            title={stopDisabled ? 'Available once the scan starts counting' : undefined}
+            className="gc-btn-pill ml-auto shrink-0"
+            style={{ padding: '3px 12px' }}
+          >
             Stop
           </button>
         </div>
