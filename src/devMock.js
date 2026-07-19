@@ -132,7 +132,12 @@ window.fetch = function (url, options) {
   if (!u.startsWith('https://www.googleapis.com/')) return realFetch(url, options)
 
   if (u.startsWith(`${API}/profile`)) {
-    return json({ emailAddress: 'preview@example.com' })
+    const live = messages.filter((m) => !m.trashed)
+    return json({
+      emailAddress: 'preview@example.com',
+      messagesTotal: live.length,
+      threadsTotal: Math.round(live.length * 0.8),
+    })
   }
 
   // messages.list — pagination in pages of 500 (our dataset fits in one page)
@@ -171,11 +176,30 @@ window.fetch = function (url, options) {
 // Fake chrome.* — just enough for auth, storage, and the unsubscribe fetch
 // ---------------------------------------------------------------------------
 
-const storageData = {}
+// Backed by sessionStorage so chrome.storage.local survives page reloads in
+// the preview (like the real thing) but resets when the tab closes.
+let storageData = {}
+try { storageData = JSON.parse(sessionStorage.getItem('mockChromeStorage') || '{}') } catch { /* fresh start */ }
+function persistMockStorage() {
+  try { sessionStorage.setItem('mockChromeStorage', JSON.stringify(storageData)) } catch { /* quota — preview only, ignore */ }
+}
 
 window.chrome = {
   identity: {
-    getAuthToken({ interactive }, cb) { cb('dev-preview-token') },
+    // Mimics real first-run auth so the onboarding flow is previewable:
+    // silent requests fail until an "interactive" sign-in has happened once
+    // this browser session; interactive requests take ~1.2s so the
+    // "waiting on Google" screen is actually visible.
+    getAuthToken({ interactive }, cb) {
+      const authed = sessionStorage.getItem('mockAuthed') === '1'
+      if (interactive) {
+        setTimeout(() => { sessionStorage.setItem('mockAuthed', '1'); cb('dev-preview-token') }, 1200)
+      } else if (authed) {
+        cb('dev-preview-token')
+      } else {
+        cb(undefined) // no token yet — getToken() rejects, like a fresh install
+      }
+    },
   },
   runtime: {
     lastError: undefined,
@@ -197,7 +221,7 @@ window.chrome = {
         for (const k of wanted) if (k in storageData) out[k] = storageData[k]
         cb(out)
       },
-      set(obj, cb) { Object.assign(storageData, obj); cb?.() },
+      set(obj, cb) { Object.assign(storageData, obj); persistMockStorage(); cb?.() },
     },
   },
 }

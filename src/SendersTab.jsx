@@ -21,9 +21,10 @@ import { useState, useRef, useMemo, useEffect } from 'react'
 import { getToken, GmailAuthError } from './auth.js'
 import { scanSenders, trashAllFromSender, attemptUnsubscribe, parseUnsubscribeUrl } from './gmail.js'
 import { formatSize, formatTimeAgo, dragScrollSpeed } from './utils.js'
-import { Segmented, ConfirmSheet, BusyCard, Rail, BulkBar } from './ui.jsx'
+import { Segmented, ConfirmSheet, Rail, BulkBar, PrimaryButton, ProgressStrip } from './ui.jsx'
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const ONE_MB = 1 * 1024 * 1024
 const FIVE_MB = 5 * 1024 * 1024
 
 // Each filter is applied client-side against the already-scanned messages —
@@ -32,8 +33,14 @@ const FILTERS = [
   { id: 'olderThan1y', label: 'Older than 1 year' },
   { id: 'olderThan6m', label: 'Older than 6 months' },
   { id: 'unread', label: 'Unread only' },
+  { id: 'readOnly', label: 'Read only' },
+  { id: 'largerThan1mb', label: 'Larger than 1 MB' },
   { id: 'largerThan5mb', label: 'Larger than 5 MB' },
 ]
+
+// Pairs that can't both be on: an email can't be unread AND read, so
+// turning one on turns the other off.
+const EXCLUSIVE_FILTERS = { unread: 'readOnly', readOnly: 'unread' }
 
 // `onAuthError` is called whenever a Gmail action fails because the token has
 // expired or been revoked — App.jsx uses it to show a "Reconnect Gmail"
@@ -47,13 +54,36 @@ export default function SendersTab({ onAuthError, onAction }) {
   // Which of the three screens is showing (see the top-of-file comment).
   const [zPhase, setZPhase] = useState('form')
 
+  // Vertical entrance for phase changes within this tab (results rise up,
+  // the form drops back down) — applied only at the moment the phase
+  // changes, so re-showing the tab after a tab switch doesn't replay it.
+  // Same pattern as SearchTab; see the comment there for the full why.
+  const [phaseAnim, setPhaseAnim] = useState(null)
+  const prevPhaseRef = useRef(zPhase)
+  useEffect(() => {
+    if (prevPhaseRef.current === zPhase) return
+    prevPhaseRef.current = zPhase
+    setPhaseAnim(zPhase === 'results' ? 'gcInUp .22s ease' : 'gcInDown .22s ease')
+    const t = setTimeout(() => setPhaseAnim(null), 260)
+    return () => clearTimeout(t)
+  }, [zPhase])
+
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [progress, setProgress] = useState({ loaded: 0, total: 0 })
 
-  // When the most recent completed scan happened and which scope it covered.
+  // True only while a scan is streaming results in (loading also covers bulk
+  // unsub/delete operations, so it can't tell the two apart on its own).
+  const [scanning, setScanning] = useState(false)
+  // Checked between batches (via scanSenders' isCancelled option) so the
+  // Stop button can halt a scan mid-run, keeping the partial results.
+  const scanCancelledRef = useRef(false)
+
+  // When the most recent completed scan happened, which scope it covered,
+  // and whether it was stopped early (partial).
   const [lastScanTime, setLastScanTime] = useState(null)
   const [lastScanScope, setLastScanScope] = useState(null)
+  const [lastScanPartial, setLastScanPartial] = useState(false)
 
   // Scope — 'inbox' or 'all'. The only control that requires a rescan to apply.
   const [scope, setScope] = useState('inbox')
@@ -66,7 +96,14 @@ export default function SendersTab({ onAuthError, onAction }) {
   function toggleFilter(id) {
     setActiveFilters((prev) => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+        // e.g. selecting "Read only" while "Unread only" is on switches them
+        const opposite = EXCLUSIVE_FILTERS[id]
+        if (opposite) next.delete(opposite)
+      }
       return next
     })
   }
@@ -193,10 +230,11 @@ export default function SendersTab({ onAuthError, onAction }) {
   // immediately. With nothing saved, the tab starts on the scan form.
   useEffect(() => {
     chrome.storage.local.get(
-      ['sendersLastScanTime', 'sendersLastScanScope', 'sendersLastScanData', 'sendersNeedsManualUnsub'],
+      ['sendersLastScanTime', 'sendersLastScanScope', 'sendersLastScanData', 'sendersLastScanPartial', 'sendersNeedsManualUnsub'],
       (r) => {
         if (r.sendersLastScanTime) {
           setLastScanTime(r.sendersLastScanTime)
+          setLastScanPartial(!!r.sendersLastScanPartial)
           const savedScope = r.sendersLastScanScope || 'all' // old data before this field existed was always an all-mail scan
           setLastScanScope(savedScope)
           setScope(savedScope)
@@ -227,9 +265,11 @@ export default function SendersTab({ onAuthError, onAction }) {
   // --- Scan ---
 
   // Saves the full scan to storage.local so it survives closing the panel.
-  function persistScan(messages, time, scanScope) {
+  // `partial` marks a scan that was stopped early, so a later session's
+  // "last scanned" caption doesn't claim more coverage than it has.
+  function persistScan(messages, time, scanScope, partial = false) {
     chrome.storage.local.set(
-      { sendersLastScanData: messages, sendersLastScanTime: time, sendersLastScanScope: scanScope },
+      { sendersLastScanData: messages, sendersLastScanTime: time, sendersLastScanScope: scanScope, sendersLastScanPartial: partial },
       () => {
         if (chrome.runtime.lastError) {
           console.warn('Could not save scan results:', chrome.runtime.lastError.message)
@@ -240,32 +280,49 @@ export default function SendersTab({ onAuthError, onAction }) {
 
   async function runScan() {
     setLoading(true)
-    setZPhase('busy')
+    setScanning(true)
+    setZPhase('results') // results view streams in live below the progress strip
     setStatus('')
     setRawMessages([])
     setSelectedSenders(new Set())
     setConfirm(null)
     setProgress({ loaded: 0, total: 0 })
+    scanCancelledRef.current = false
+
+    // Tracks how many messages have streamed in, readable inside catch —
+    // component state can't be read back synchronously there.
+    let streamedCount = 0
+
     try {
       const token = await getToken(false)
       const results = await scanSenders(
         token,
-        { scope },
+        { scope, isCancelled: () => scanCancelledRef.current },
         (loaded, total) => setProgress({ loaded, total }),
-        (partial) => setRawMessages(partial)
+        (partial) => { streamedCount = partial.length; setRawMessages(partial) }
       )
       setRawMessages(results)
       hasScannedRef.current = true
+      const partial = scanCancelledRef.current // Stop keeps a valid partial scan
+      setLastScanPartial(partial)
       const now = Date.now()
       setLastScanTime(now)
       setLastScanScope(scope)
-      persistScan(results, now, scope)
-      setZPhase('results')
+      persistScan(results, now, scope, partial)
     } catch (err) {
       handleGmailError(err)
-      setZPhase(hasScannedRef.current ? 'results' : 'form')
+      if (streamedCount > 0) {
+        // Keep whatever streamed in before the error, marked as partial.
+        hasScannedRef.current = true
+        setLastScanPartial(true)
+        setLastScanScope(scope)
+        setLastScanTime(Date.now())
+      } else if (!hasScannedRef.current) {
+        setZPhase('form')
+      }
     } finally {
       setLoading(false)
+      setScanning(false)
       setProgress({ loaded: 0, total: 0 })
     }
   }
@@ -284,6 +341,8 @@ export default function SendersTab({ onAuthError, onAction }) {
       if (activeFilters.has('olderThan1y') && !(msg.dateMs && msg.dateMs < cutoff1y)) continue
       if (activeFilters.has('olderThan6m') && !(msg.dateMs && msg.dateMs < cutoff6m)) continue
       if (activeFilters.has('unread') && !msg.isUnread) continue
+      if (activeFilters.has('readOnly') && msg.isUnread) continue
+      if (activeFilters.has('largerThan1mb') && !(msg.sizeEstimate >= ONE_MB)) continue
       if (activeFilters.has('largerThan5mb') && !(msg.sizeEstimate >= FIVE_MB)) continue
 
       const entry = map.get(msg.email) || {
@@ -365,7 +424,15 @@ export default function SendersTab({ onAuthError, onAction }) {
   const senderDragPosRef = useRef({ x: 0, y: 0 })
   const senderDragScrollRafRef = useRef(null)
 
-  function applySenderSelection(email, shouldBeSelected) {
+  // `preview: true` additionally opens a Gmail search for the sender's mail
+  // in the page behind the panel — used only for a deliberate click on the
+  // card body, never for rail drags or bulk selects, so sweeping a range
+  // doesn't fire off a string of Gmail searches. (Kept outside the state
+  // updater below — React runs updaters twice in dev to catch impure ones.)
+  function applySenderSelection(email, shouldBeSelected, { preview = false } = {}) {
+    if (preview && shouldBeSelected && !selectedSenders.has(email)) {
+      window.parent.postMessage({ type: 'OPEN_SEARCH', query: `from:${email}` }, '*')
+    }
     setSelectedSenders((prev) => {
       if (prev.has(email) === shouldBeSelected) return prev
       const next = new Set(prev)
@@ -648,11 +715,11 @@ export default function SendersTab({ onAuthError, onAction }) {
           ref={scrollRef}
           onScroll={handleScroll}
           className="h-full overflow-y-auto select-none"
-          style={{ padding: '12px 14px 96px' }}
+          style={{ padding: '12px 14px 24px' }}
         >
           {/* ============ FORM PHASE ============ */}
           {zPhase === 'form' && (
-            <div style={{ animation: 'gcInR .22s ease' }}>
+            <div style={{ animation: phaseAnim || undefined }}>
               <p style={{ margin: '2px 2px 12px', fontSize: 12, color: 'var(--sub)' }}>
                 Scan your mailbox grouping mail by sender to spot subscriptions and repeat senders.
               </p>
@@ -674,41 +741,48 @@ export default function SendersTab({ onAuthError, onAction }) {
                     ? 'Only mail currently in your inbox.'
                     : 'Everything including archived, trash, and spam.'}
                 </div>
-                <button onClick={runScan} disabled={loading} className="gc-btn gc-btn-primary w-full">
-                  <span>Scan {scopeLabel}</span>
-                </button>
+                <PrimaryButton onClick={runScan} disabled={loading} className="w-full">
+                  Scan {scopeLabel}
+                </PrimaryButton>
               </div>
               {status && <p style={{ fontSize: 11, color: 'var(--sub)', margin: '10px 2px 0' }}>{status}</p>}
             </div>
           )}
 
-          {/* ============ BUSY PHASE ============ */}
-          {zPhase === 'busy' && (
-            <div style={{ animation: 'gcInR .22s ease' }}>
-              <BusyCard
-                title={`Scanning ${scopeLabel}…`}
-                caption="Grouping mail by sender. This can take a minute for large mailboxes."
-                progress={progress.total > 0 ? progress : null}
-              />
-            </div>
-          )}
-
-          {/* ============ RESULTS PHASE ============ */}
+          {/* ============ RESULTS PHASE (streams in live while scanning) ============ */}
           {zPhase === 'results' && (
-            <div style={{ animation: 'gcInR .22s ease' }}>
-              {/* Header — total senders under the current filters + Rescan */}
-              <div className="flex items-baseline gap-1.5" style={{ margin: '0 2px 2px' }}>
-                <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' }}>
-                  {aggregatedSenders.length} senders
-                </span>
-                <span style={{ fontSize: 12, color: 'var(--sub)' }}>· {formatSize(subTotalBytes + nonSubTotalBytes)}</span>
-                <button onClick={runScan} disabled={loading || !!acting} className="gc-btn-pill ml-auto">
-                  Rescan
-                </button>
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--faint)', margin: '0 2px 10px' }}>
-                Scanned {rawMessages.length.toLocaleString()} emails in {lastScanScope === 'inbox' ? 'Inbox' : 'All mail'}
-                {lastScanTime ? ` · ${formatTimeAgo(lastScanTime)}` : ''}
+            <div style={{ animation: phaseAnim || undefined }}>
+              {/* While the scan streams: slim sticky progress strip. Sender
+                  rows accumulate below it, counts/sizes updating in place. */}
+              {scanning && (
+                <ProgressStrip
+                  title={`Scanning ${scopeLabel}…`}
+                  detail={progress.total === 0 ? 'collecting the message list…' : null}
+                  progress={progress}
+                  onStop={() => { scanCancelledRef.current = true }}
+                />
+              )}
+
+              {/* Scan summary card — total senders under the current filters,
+                  what was scanned and when, plus the Rescan button */}
+              <div className="gc-card" style={{ padding: '10px 12px', marginBottom: 10 }}>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' }}>
+                    {aggregatedSenders.length} senders
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--sub)' }}>· {formatSize(subTotalBytes + nonSubTotalBytes)}</span>
+                  {!scanning && (
+                    <button onClick={runScan} disabled={loading || !!acting} className="gc-btn gc-btn-accent ml-auto shrink-0">
+                      Rescan
+                    </button>
+                  )}
+                </div>
+                {!scanning && (
+                  <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>
+                    {lastScanPartial ? 'Stopped early — scanned' : 'Scanned'} {rawMessages.length.toLocaleString()} emails in {lastScanScope === 'inbox' ? 'Inbox' : 'All mail'}
+                    {lastScanTime ? ` · ${formatTimeAgo(lastScanTime)}` : ''}
+                  </div>
+                )}
               </div>
 
               {/* Filter chips — applied instantly, no rescan */}
@@ -725,7 +799,7 @@ export default function SendersTab({ onAuthError, onAction }) {
                 ))}
               </div>
               <div style={{ fontSize: 11, color: 'var(--faint)', margin: '0 2px 10px' }}>
-                Applied instantly to the last scan — no rescan needed.
+                Applied instantly to the last scan.
               </div>
 
               {/* Subscriptions / Everything else */}
@@ -739,9 +813,28 @@ export default function SendersTab({ onAuthError, onAction }) {
                   ]}
                 />
               </div>
-              <div style={{ fontSize: 11, color: 'var(--faint)', margin: '0 2px 10px', lineHeight: 1.6 }}>
-                <div>Subscriptions: {subSenders.length} sender{subSenders.length !== 1 ? 's' : ''} · {formatSize(subTotalBytes)}</div>
-                <div>Everything else: {nonSubSenders.length} sender{nonSubSenders.length !== 1 ? 's' : ''} · {formatSize(nonSubTotalBytes)}</div>
+              {/* Per-group totals — each sits centered under its half of the
+                  toggle above. The active side darkens/bolds while the other
+                  fades, on the same easing + duration as the toggle thumb
+                  (.34s cubic-bezier(.22,1,.36,1)) so they move as one. */}
+              <div className="grid grid-cols-2" style={{ margin: '4px 0 10px' }}>
+                {[
+                  { active: showMode === 'sub', count: subSenders.length, bytes: subTotalBytes },
+                  { active: showMode === 'nonsub', count: nonSubSenders.length, bytes: nonSubTotalBytes },
+                ].map((g, i) => (
+                  <div
+                    key={i}
+                    className="text-center"
+                    style={{
+                      fontSize: 11, lineHeight: 1.6,
+                      color: g.active ? 'var(--ink)' : 'var(--faint)',
+                      fontWeight: g.active ? 600 : 400,
+                      transition: 'color .34s cubic-bezier(.22,1,.36,1)',
+                    }}
+                  >
+                    {g.count} sender{g.count !== 1 ? 's' : ''} · {formatSize(g.bytes)}
+                  </div>
+                ))}
               </div>
 
               {status && <p style={{ fontSize: 11, color: 'var(--sub)', margin: '0 2px 10px' }}>{status}</p>}
@@ -770,6 +863,7 @@ export default function SendersTab({ onAuthError, onAction }) {
                 <button
                   onClick={confirmUnsubDeleteAll}
                   disabled={loading || !!acting}
+                  title={scanning ? 'Available when the scan finishes' : undefined}
                   className="gc-btn gc-btn-danger w-full"
                   style={{ padding: 10, fontSize: '12.5px', marginBottom: 12 }}
                 >
@@ -817,7 +911,10 @@ export default function SendersTab({ onAuthError, onAction }) {
               )}
 
               {/* Sender cards — rail + card. The rail bead starts a drag-
-                  select; clicking the card body toggles just that row. */}
+                  select; clicking the card body toggles that row AND opens
+                  a Gmail search for the sender's mail in the page behind
+                  the panel (same idea as clicking a message row in the
+                  Search tab, which opens that email). */}
               {filteredSenders.map((sender) => {
                 const isActing = acting === sender.email
                 const value = sortBy === 'count' ? sender.count : sender.totalBytes
@@ -827,7 +924,7 @@ export default function SendersTab({ onAuthError, onAction }) {
                   <div
                     key={sender.email}
                     data-sender-email={sender.email}
-                    className="flex items-stretch gap-2"
+                    className="flex items-stretch gap-2 gc-row-in"
                     style={{ margin: '0 0 8px' }}
                     onMouseEnter={() => senderDragOver(sender.email)}
                   >
@@ -836,7 +933,8 @@ export default function SendersTab({ onAuthError, onAction }) {
                       onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); startSenderDrag(sender.email, e) }}
                     />
                     <div
-                      onClick={() => applySenderSelection(sender.email, !isSelected)}
+                      onClick={() => applySenderSelection(sender.email, !isSelected, { preview: true })}
+                      title={`Select — also shows mail from ${sender.email} in Gmail`}
                       className="flex-1 min-w-0 cursor-pointer transition-all hover:-translate-y-[2px] hover:shadow-[0_6px_16px_rgba(40,35,25,.12)]"
                       style={{
                         padding: '10px 12px', borderRadius: 'var(--radius)',
@@ -906,9 +1004,6 @@ export default function SendersTab({ onAuthError, onAction }) {
             </div>
           )}
 
-          <div style={{ fontSize: 11, color: 'var(--faint)', textAlign: 'center', marginTop: 8 }}>
-            Scans directly from your emails
-          </div>
         </div>
 
         {/* Back to top — floats over the scroll box once it's scrolled a bit */}
@@ -998,11 +1093,12 @@ export default function SendersTab({ onAuthError, onAction }) {
         </div>
       )}
 
-      {/* Floating bulk-action bar — rises while senders are selected */}
+      {/* Bulk-action bar — rises below the scroll area while senders are selected */}
       {zPhase === 'results' && selectedList.length > 0 && !confirm && bulkProgress.total === 0 && (
         <BulkBar
           label={`${selectedList.length} sender${selectedList.length !== 1 ? 's' : ''} · ${formatSize(selectedBytes)}`}
           onClear={() => setSelectedSenders(new Set())}
+          hint={scanning ? 'Finishing scan… actions unlock when it completes.' : undefined}
         >
           {selectedSubs.length > 0 && (
             <button

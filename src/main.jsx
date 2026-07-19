@@ -4,6 +4,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+// Registers the <shader-glow> custom element (the animated WebGL glow inside
+// the primary Search/Scan buttons) — copied as-is from the design handoff.
+import './shader-glow.js'
 import App from './App.jsx'
 
 async function start() {

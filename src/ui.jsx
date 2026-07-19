@@ -120,6 +120,31 @@ export function Dropdown({ value, options, onChange, variant = 'field', disabled
   )
 }
 
+// PrimaryButton — the gradient CTA (Search / Scan / Connect) with the
+// design's animated WebGL glow overlay. <shader-glow> is the custom element
+// registered by shader-glow.js (loaded once in main.jsx, copied verbatim
+// from the design handoff). The glow only animates while hovered: paused
+// flips to "false" on mouseenter and back to "true" on mouseleave, and the
+// element eases its animation to a stop rather than freezing. The label
+// sits in a position:relative span so it paints above the canvas.
+export function PrimaryButton({ children, className = '', ...props }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <button
+      {...props}
+      className={`gc-btn gc-btn-primary ${className}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <shader-glow
+        paused={hovered ? 'false' : 'true'}
+        style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+      />
+      <span>{children}</span>
+    </button>
+  )
+}
+
 // Segmented — the two-option pill switch with a sliding "thumb" (the white
 // card that glides between options). Used for the main tabs, Inbox/All mail,
 // Subscriptions/Everything else, and the small Size/Count sort toggle.
@@ -285,17 +310,22 @@ export function Rail({ selected, onMouseDown, onMouseEnter }) {
   )
 }
 
-// BulkBar — the floating action bar that rises from the bottom of the panel
-// while something is selected. Children are the action buttons.
-export function BulkBar({ label, onClear, children }) {
+// BulkBar — the action bar that rises from the bottom of the panel while
+// something is selected. Children are the action buttons.
+// It sits IN the layout (not floating over it): the tab's scroll area ends
+// at the bar's top edge, so it never covers the back-to-top arrow, and
+// drag-select auto-scroll keeps working right down to the last row.
+// `hint` (optional) renders a small muted line under the buttons — used
+// while a search/scan is still streaming and the actions are disabled.
+export function BulkBar({ label, onClear, hint, children }) {
   return (
     <div
-      className="fixed z-20"
+      className="shrink-0"
       style={{
-        left: 12, right: 12, bottom: 12,
+        margin: '8px 12px 12px',
         background: 'var(--card)', border: '1px solid var(--line)',
         borderRadius: 'var(--radius)', padding: '10px 12px',
-        boxShadow: '0 10px 28px rgba(20,20,20,.16)', animation: 'gcRise .16s ease',
+        boxShadow: '0 6px 20px rgba(20,20,20,.12)', animation: 'gcRise .16s ease',
       }}
     >
       <div className="flex items-center gap-2" style={{ fontSize: 12, marginBottom: 8 }}>
@@ -310,6 +340,51 @@ export function BulkBar({ label, onClear, children }) {
         </button>
       </div>
       <div className="flex gap-2">{children}</div>
+      {hint && (
+        <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 6, textAlign: 'center' }}>{hint}</div>
+      )}
+    </div>
+  )
+}
+
+// ProgressStrip — the slim sticky strip pinned to the top of the results
+// area while a search/scan is still streaming rows in. Shows what's
+// happening, an optional detail line, and a Stop button.
+// `progress` ({ loaded, total }) is optional: when given (and total is
+// known), the bar fills proportionally so it's clear how far along the run
+// is — without spelling out exact counts. Without it, the bar is the
+// indeterminate sweep.
+export function ProgressStrip({ title, detail, progress, onStop }) {
+  const pct = progress && progress.total > 0
+    ? Math.round((progress.loaded / progress.total) * 100)
+    : null
+  return (
+    <div className="sticky z-[15]" style={{ top: 0, marginBottom: 12 }}>
+      <div className="gc-card" style={{ padding: '9px 12px' }}>
+        <div className="flex items-center gap-2">
+          <span style={{ fontWeight: 600, fontSize: 12 }}>{title}</span>
+          {detail && (
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" style={{ fontSize: 11, color: 'var(--faint)' }}>
+              {detail}
+            </span>
+          )}
+          <button onClick={onStop} className="gc-btn-pill ml-auto shrink-0" style={{ padding: '3px 12px' }}>
+            Stop
+          </button>
+        </div>
+        <div className="relative overflow-hidden" style={{ height: 3, borderRadius: 2, background: 'var(--chip)', marginTop: 7 }}>
+          {pct === null ? (
+            <div className="gc-bar-sweep" />
+          ) : (
+            /* Determinate fill + sweeping sheen (see .gc-bar-* in index.css).
+               The strip only renders while a run is active, so the sheen
+               stops the moment the search/scan completes or is stopped. */
+            <div className="gc-bar-fill" style={{ width: `${pct}%` }}>
+              <div className="gc-bar-sheen" />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
