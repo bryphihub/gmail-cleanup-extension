@@ -68,6 +68,10 @@ function showPanel() {
 }
 
 function hidePanel() {
+  // Let the React app cancel panel-lifetime background jobs before hiding.
+  // The iframe stays mounted, so without this signal work would keep running.
+  const iframe = panel?.querySelector('iframe')
+  iframe?.contentWindow?.postMessage({ type: 'PANEL_HIDDEN' }, '*')
   if (panel) panel.style.display = 'none'
   // Stop watching and let Gmail restore its own width
   if (nHObserver) { nHObserver.disconnect(); nHObserver = null }

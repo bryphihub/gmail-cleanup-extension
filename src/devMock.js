@@ -119,12 +119,23 @@ function matchesQuery(m, q) {
 
 const realFetch = window.fetch.bind(window)
 const API = 'https://www.googleapis.com/gmail/v1/users/me'
+// Optional regression-test mode: ?slowActions=1 uses a 450ms delay, while a
+// larger numeric value (for example ?slowActions=5000) supplies an exact
+// delay. This file is dev-only and is stripped from production builds.
+const slowActionsParam = new URLSearchParams(window.location.search).get('slowActions')
+const requestedActionDelay = Number(slowActionsParam)
+const ACTION_DELAY_MS = slowActionsParam === null
+  ? 0
+  : requestedActionDelay > 1 ? requestedActionDelay : 450
 
-function json(data) {
-  return Promise.resolve(new Response(JSON.stringify(data), {
+function json(data, delayMs = 0) {
+  const response = () => new Response(JSON.stringify(data), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
-  }))
+  })
+  return delayMs > 0
+    ? new Promise((resolve) => setTimeout(() => resolve(response()), delayMs))
+    : Promise.resolve(response())
 }
 
 window.fetch = function (url, options) {
@@ -158,13 +169,13 @@ window.fetch = function (url, options) {
     const m = messages.find((x) => x.id === idMatch[1])
     if (!m) return json({})
     const action = idMatch[2]
-    if (action === 'trash')   { m.trashed = true;  return json({ id: m.id }) }
+    if (action === 'trash')   { m.trashed = true;  return json({ id: m.id }, ACTION_DELAY_MS) }
     if (action === 'untrash') { m.trashed = false; return json({ id: m.id }) }
     if (action === 'modify') {
       const body = options?.body ? JSON.parse(options.body) : {}
       if (body.removeLabelIds?.includes('INBOX')) m.archived = true
       if (body.addLabelIds?.includes('INBOX'))    m.archived = false
-      return json({ id: m.id })
+      return json({ id: m.id }, ACTION_DELAY_MS)
     }
     return json(toApiMessage(m))
   }

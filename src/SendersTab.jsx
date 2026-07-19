@@ -44,10 +44,10 @@ const EXCLUSIVE_FILTERS = { unread: 'readOnly', readOnly: 'unread' }
 
 // `onAuthError` is called whenever a Gmail action fails because the token has
 // expired or been revoked — App.jsx uses it to show a "Reconnect Gmail"
-// banner above both tabs. `onAction` reports a completed Delete/Unsub &
-// delete so App.jsx can pop up a shared "Undo" toast at the bottom of the
-// panel — the Undo control itself lives there, not in this tab.
-export default function SendersTab({ onAuthError, onAction }) {
+// banner above both tabs. `onAction` publishes Delete/Unsub & delete
+// immediately so App.jsx can show its shared Undo toast while Gmail batches
+// run — the Undo control itself lives there, not in this tab.
+export default function SendersTab({ onAuthError, onAction, enqueueBackgroundAction }) {
   // Every message from the last scan, unfiltered — the single source of truth.
   const [rawMessages, setRawMessages] = useState([])
 
@@ -72,8 +72,8 @@ export default function SendersTab({ onAuthError, onAction }) {
   const [status, setStatus] = useState('')
   const [progress, setProgress] = useState({ loaded: 0, total: 0 })
 
-  // True only while a scan is streaming results in (loading also covers bulk
-  // unsub/delete operations, so it can't tell the two apart on its own).
+  // True only while a scan is streaming results in. `loading` also covers
+  // the remaining blocking unsubscribe-only flow.
   const [scanning, setScanning] = useState(false)
   // Checked between batches (via scanSenders' isCancelled option) so the
   // Stop button can halt a scan mid-run, keeping the partial results.
@@ -112,7 +112,6 @@ export default function SendersTab({ onAuthError, onAction }) {
   // they don't reappear on future scans either.
   const [dismissedSubs, setDismissedSubs] = useState(new Set())
 
-  const [acting, setActing] = useState(null) // email currently being worked on
   const [bulkProgress, setBulkProgress] = useState({ loaded: 0, total: 0 })
   const [needsManualUnsub, setNeedsManualUnsub] = useState([])
 
@@ -159,6 +158,48 @@ export default function SendersTab({ onAuthError, onAction }) {
         })
       }
     }
+  }
+
+  // Starts a sender-side Trash job while publishing its Undo toast now, not
+  // after every sender and Gmail page finishes. Undo restores the cached scan
+  // immediately, cancels untouched work, and lets App reverse only IDs from
+  // the batch that was already in flight.
+  function enqueueTrashWithImmediateUndo({ count, restoreLocal, run }) {
+    let undoRequested = false
+    let resolveJob
+    const jobDone = new Promise((resolve) => { resolveJob = resolve })
+
+    const cancelJob = enqueueBackgroundAction({
+      onCancel: () => {
+        if (!undoRequested) restoreLocal?.()
+        resolveJob([])
+      },
+      run: async (context) => {
+        let succeededIds = []
+        try {
+          succeededIds = await run({
+            ...context,
+            isUndoRequested: () => undoRequested,
+          }) || []
+        } finally {
+          resolveJob(succeededIds)
+        }
+      },
+    })
+
+    onAction?.(
+      'trash',
+      [],
+      restoreLocal,
+      {
+        count,
+        prepareUndo: async () => {
+          undoRequested = true
+          cancelJob()
+          return jobDone
+        },
+      }
+    )
   }
 
   // Selection and any pending confirmation are scoped to whichever view is
@@ -413,6 +454,19 @@ export default function SendersTab({ onAuthError, onAction }) {
     })
   }
 
+  // Removes exact message IDs from whichever scan happens to be on screen
+  // when a background job finishes. This matters if the person rescans while
+  // deletion is still running: rows loaded by that newer scan are cleaned up
+  // as each background job settles too.
+  function pruneMessageIds(idsToRemove) {
+    if (idsToRemove.size === 0) return
+    setRawMessages((prev) => {
+      const next = prev.filter((m) => !idsToRemove.has(m.id))
+      chrome.storage.local.set({ sendersLastScanData: next })
+      return next
+    })
+  }
+
   function toggleSelectAll() {
     setSelectedSenders(allVisibleSelected ? new Set() : new Set(filteredSenders.map((s) => s.email)))
   }
@@ -571,20 +625,45 @@ export default function SendersTab({ onAuthError, onAction }) {
 
   // Trashes every email from this sender (globally, not just what's currently
   // visible under the filters) — the point is actually freeing up storage.
-  async function handleDeleteSender(sender) {
-    setActing(sender.email)
-    try {
-      const token = await getToken(false)
-      const { ids } = await trashAllFromSender(token, sender.email)
-      const idSet = new Set(ids)
-      const removedRecords = rawMessages.filter((m) => idSet.has(m.id))
-      pruneMessages(new Set([sender.email]))
-      onAction?.('trash', ids, makeRestoreFn(removedRecords))
-    } catch (err) {
-      handleGmailError(err, 'Error deleting emails: ')
-    } finally {
-      setActing(null)
-    }
+  function handleDeleteSender(sender) {
+    const emailSet = new Set([sender.email])
+    const removedRecords = rawMessages.filter((m) => m.email === sender.email)
+
+    // Optimistic removal: the sender card disappears as soon as confirmation
+    // closes; Gmail work continues quietly in App's queue.
+    pruneMessages(emailSet)
+    setStatus('')
+
+    enqueueTrashWithImmediateUndo({
+      count: sender.count,
+      restoreLocal: makeRestoreFn(removedRecords),
+      run: async ({ isCancelled, isUndoRequested }) => {
+        let succeededIds = []
+        try {
+          const token = await getToken(false)
+          const result = await trashAllFromSender(token, sender.email, undefined, isCancelled)
+          succeededIds = result.ids
+          const succeededSet = new Set(result.ids)
+          const failedRecords = removedRecords.filter((m) => !succeededSet.has(m.id))
+
+          if (!isUndoRequested()) {
+            pruneMessageIds(succeededSet)
+            if (failedRecords.length > 0) makeRestoreFn(failedRecords)()
+          }
+
+          if (result.authFailed) {
+            onAuthError?.()
+            setStatus('Your Gmail connection expired — unprocessed sender mail was restored.')
+          } else if (!isCancelled() && result.count < result.total) {
+            setStatus('Some emails from this sender were not processed and were restored.')
+          }
+        } catch (err) {
+          if (!isUndoRequested()) makeRestoreFn(removedRecords)()
+          if (!isCancelled()) handleGmailError(err, 'Error deleting emails: ')
+        }
+        return succeededIds
+      },
+    })
   }
 
   // --- Shared bulk operations ---
@@ -630,78 +709,151 @@ export default function SendersTab({ onAuthError, onAction }) {
     }
   }
 
-  async function bulkDelete(senders) {
+  function bulkDelete(senders) {
     const emailSet = new Set(senders.map((s) => s.email))
-    setLoading(true)
+    const removedRecords = rawMessages.filter((m) => emailSet.has(m.email))
+
+    pruneMessages(emailSet)
     setStatus('')
-    setBulkProgress({ loaded: 0, total: senders.length })
-    const allTrashedIds = []
-    try {
-      const token = await getToken(false)
-      for (let i = 0; i < senders.length; i++) {
-        setBulkProgress({ loaded: i, total: senders.length })
-        const { ids } = await trashAllFromSender(token, senders[i].email)
-        allTrashedIds.push(...ids)
-      }
-      setBulkProgress({ loaded: senders.length, total: senders.length })
-      const idSet = new Set(allTrashedIds)
-      const removedRecords = rawMessages.filter((m) => idSet.has(m.id))
-      pruneMessages(emailSet)
-      setStatus('')
-      onAction?.('trash', allTrashedIds, makeRestoreFn(removedRecords))
-    } catch (err) {
-      onAction?.('trash', allTrashedIds) // whatever succeeded before the error is still undoable
-      handleGmailError(err, 'Error during bulk delete: ')
-    } finally {
-      setLoading(false)
-      setBulkProgress({ loaded: 0, total: 0 })
-    }
+
+    enqueueTrashWithImmediateUndo({
+      count: senders.reduce((sum, sender) => sum + sender.count, 0),
+      restoreLocal: makeRestoreFn(removedRecords),
+      run: async ({ isCancelled, isUndoRequested }) => {
+        const allTrashedIds = []
+        const succeededSet = new Set()
+        let authError = null
+        let otherError = null
+
+        try {
+          const token = await getToken(false)
+          for (const sender of senders) {
+            if (isCancelled()) break
+            try {
+              const result = await trashAllFromSender(token, sender.email, undefined, isCancelled)
+              for (const id of result.ids) {
+                succeededSet.add(id)
+                allTrashedIds.push(id)
+              }
+              if (result.authFailed) {
+                authError = new GmailAuthError('Gmail connection expired')
+                break
+              }
+            } catch (err) {
+              if (err instanceof GmailAuthError) {
+                authError = err
+                break
+              }
+              otherError = err
+            }
+          }
+        } catch (err) {
+          if (err instanceof GmailAuthError) authError = err
+          else otherError = err
+        }
+
+        const failedRecords = removedRecords.filter((m) => !succeededSet.has(m.id))
+        if (!isUndoRequested()) {
+          pruneMessageIds(succeededSet)
+          if (failedRecords.length > 0) makeRestoreFn(failedRecords)()
+        }
+
+        if (authError) {
+          onAuthError?.()
+          setStatus('Your Gmail connection expired — unprocessed sender mail was restored.')
+        } else if (!isCancelled() && (otherError || failedRecords.length > 0)) {
+          setStatus('Some sender mail was not processed and was restored.')
+        }
+        return allTrashedIds
+      },
+    })
   }
 
-  async function bulkUnsubAndDelete(senders) {
+  function bulkUnsubAndDelete(senders) {
     const emailSet = new Set(senders.map((s) => s.email))
+    const removedRecords = rawMessages.filter((m) => emailSet.has(m.email))
     setDismissedSubs((prev) => {
       const next = new Set([...prev, ...emailSet])
       chrome.storage.local.set({ dismissedSubs: [...next] })
       return next
     })
-
-    setLoading(true)
+    pruneMessages(emailSet)
     setStatus('')
-    setBulkProgress({ loaded: 0, total: senders.length })
-    const manualQueue = []
-    const allTrashedIds = []
-    try {
-      const token = await getToken(false)
-      for (let i = 0; i < senders.length; i++) {
-        const sender = senders[i]
-        setBulkProgress({ loaded: i, total: senders.length })
-        const [unsubResult, trashResult] = await Promise.allSettled([
-          attemptUnsubscribe(token, sender.unsubHeader),
-          trashAllFromSender(token, sender.email),
-        ])
-        if (unsubResult.value === 'manual') manualQueue.push(sender)
-        if (trashResult.status === 'fulfilled') allTrashedIds.push(...trashResult.value.ids)
-      }
-      setBulkProgress({ loaded: senders.length, total: senders.length })
-      const idSet = new Set(allTrashedIds)
-      const removedRecords = rawMessages.filter((m) => idSet.has(m.id))
-      pruneMessages(emailSet)
-      const automated = senders.length - manualQueue.length
-      setStatus(
-        manualQueue.length > 0
-          ? `Done — ${automated} unsubscribed automatically, ${manualQueue.length} need manual action below.`
-          : ''
-      )
-      if (manualQueue.length > 0) setNeedsManualUnsub((prev) => [...prev, ...manualQueue])
-      onAction?.('trash', allTrashedIds, makeRestoreFn(removedRecords, [...emailSet]))
-    } catch (err) {
-      onAction?.('trash', allTrashedIds)
-      handleGmailError(err, 'Error during bulk operation: ')
-    } finally {
-      setLoading(false)
-      setBulkProgress({ loaded: 0, total: 0 })
-    }
+
+    enqueueTrashWithImmediateUndo({
+      count: senders.reduce((sum, sender) => sum + sender.count, 0),
+      restoreLocal: makeRestoreFn(removedRecords, [...emailSet]),
+      run: async ({ isCancelled, isUndoRequested }) => {
+        const manualQueue = []
+        const allTrashedIds = []
+        const succeededSet = new Set()
+        const fullyProcessedEmails = new Set()
+        let authError = null
+        let otherError = null
+
+        try {
+          const token = await getToken(false)
+          for (const sender of senders) {
+            if (isCancelled()) break
+            const [unsubResult, trashResult] = await Promise.allSettled([
+              attemptUnsubscribe(token, sender.unsubHeader),
+              trashAllFromSender(token, sender.email, undefined, isCancelled),
+            ])
+
+            if (unsubResult.status === 'fulfilled' && unsubResult.value === 'manual') {
+              manualQueue.push(sender)
+            } else if (unsubResult.status === 'rejected') {
+              if (unsubResult.reason instanceof GmailAuthError) authError = unsubResult.reason
+              else otherError = unsubResult.reason
+            }
+            if (trashResult.status === 'fulfilled') {
+              for (const id of trashResult.value.ids) {
+                succeededSet.add(id)
+                allTrashedIds.push(id)
+              }
+              if (!trashResult.value.cancelled && trashResult.value.count === trashResult.value.total) {
+                fullyProcessedEmails.add(sender.email)
+              }
+              if (trashResult.value.authFailed) {
+                authError = new GmailAuthError('Gmail connection expired')
+                break
+              }
+            } else if (trashResult.reason instanceof GmailAuthError) {
+              authError = trashResult.reason
+              break
+            } else {
+              otherError = trashResult.reason
+            }
+          }
+        } catch (err) {
+          if (err instanceof GmailAuthError) authError = err
+          else otherError = err
+        }
+
+        const failedRecords = removedRecords.filter((m) => !succeededSet.has(m.id))
+        const incompleteEmails = [...emailSet].filter((email) => !fullyProcessedEmails.has(email))
+
+        if (!isUndoRequested()) {
+          pruneMessageIds(succeededSet)
+          if (failedRecords.length > 0 || incompleteEmails.length > 0) {
+            makeRestoreFn(failedRecords, incompleteEmails)()
+          }
+        }
+        if (manualQueue.length > 0) {
+          setNeedsManualUnsub((prev) => [...prev, ...manualQueue])
+        }
+
+        if (authError) {
+          onAuthError?.()
+          setStatus('Your Gmail connection expired — unprocessed sender mail was restored.')
+        } else if (!isCancelled() && (otherError || incompleteEmails.length > 0)) {
+          setStatus('Some sender mail was not processed and was restored.')
+        } else if (manualQueue.length > 0) {
+          setStatus(`${manualQueue.length} unsubscribe${manualQueue.length !== 1 ? 's' : ''} need manual action below.`)
+        }
+        return allTrashedIds
+      },
+    })
   }
 
   // --- UI ---
@@ -756,7 +908,7 @@ export default function SendersTab({ onAuthError, onAction }) {
                   rows accumulate below it, counts/sizes updating in place. */}
               {scanning && (
                 <ProgressStrip
-                  title={`Scanning ${scopeLabel}…`}
+                  title={`Scanning ${scopeLabel.toLowerCase()}…`}
                   detail={progress.total === 0 ? 'collecting the message list…' : null}
                   progress={progress}
                   onStop={() => { scanCancelledRef.current = true }}
@@ -765,23 +917,27 @@ export default function SendersTab({ onAuthError, onAction }) {
 
               {/* Scan summary card — total senders under the current filters,
                   what was scanned and when, plus the Rescan button */}
-              <div className="gc-card" style={{ padding: '10px 12px', marginBottom: 10 }}>
-                <div className="flex items-center gap-1.5">
-                  <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' }}>
-                    {aggregatedSenders.length} senders
-                  </span>
-                  <span style={{ fontSize: 12, color: 'var(--sub)' }}>· {formatSize(subTotalBytes + nonSubTotalBytes)}</span>
+              {/* items-center on the card centers Rescan vertically across
+                  the two-line text block (count + scanned-line) beside it. */}
+              <div className="gc-card flex items-center gap-2" style={{ padding: '10px 12px', marginBottom: 10 }}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-1.5">
+                    <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' }}>
+                      {aggregatedSenders.length} senders
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--sub)' }}>· {formatSize(subTotalBytes + nonSubTotalBytes)}</span>
+                  </div>
                   {!scanning && (
-                    <button onClick={runScan} disabled={loading || !!acting} className="gc-btn gc-btn-accent ml-auto shrink-0">
-                      Rescan
-                    </button>
+                    <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>
+                      {lastScanPartial ? 'Stopped early — scanned' : 'Scanned'} {rawMessages.length.toLocaleString()} emails in {lastScanScope === 'inbox' ? 'Inbox' : 'All mail'}
+                      {lastScanTime ? ` · ${formatTimeAgo(lastScanTime)}` : ''}
+                    </div>
                   )}
                 </div>
                 {!scanning && (
-                  <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>
-                    {lastScanPartial ? 'Stopped early — scanned' : 'Scanned'} {rawMessages.length.toLocaleString()} emails in {lastScanScope === 'inbox' ? 'Inbox' : 'All mail'}
-                    {lastScanTime ? ` · ${formatTimeAgo(lastScanTime)}` : ''}
-                  </div>
+                  <PrimaryButton pill onClick={runScan} disabled={loading} className="shrink-0">
+                    Rescan
+                  </PrimaryButton>
                 )}
               </div>
 
@@ -862,7 +1018,7 @@ export default function SendersTab({ onAuthError, onAction }) {
               {showMode === 'sub' && visibleSubs.length > 0 && bulkProgress.total === 0 && (
                 <button
                   onClick={confirmUnsubDeleteAll}
-                  disabled={loading || !!acting}
+                  disabled={loading}
                   title={scanning ? 'Available when the scan finishes' : undefined}
                   className="gc-btn gc-btn-danger w-full"
                   style={{ padding: 10, fontSize: '12.5px', marginBottom: 12 }}
@@ -916,7 +1072,6 @@ export default function SendersTab({ onAuthError, onAction }) {
                   the panel (same idea as clicking a message row in the
                   Search tab, which opens that email). */}
               {filteredSenders.map((sender) => {
-                const isActing = acting === sender.email
                 const value = sortBy === 'count' ? sender.count : sender.totalBytes
                 const barPct = Math.max(3, Math.round((value / maxValue) * 100))
                 const isSelected = selectedSenders.has(sender.email)
@@ -967,30 +1122,26 @@ export default function SendersTab({ onAuthError, onAction }) {
                         <div className="h-full" style={{ borderRadius: 2, background: 'var(--accent-grad)', width: `${barPct}%` }} />
                       </div>
 
-                      {isActing ? (
-                        <p style={{ fontSize: '11.5px', color: 'var(--faint)', fontStyle: 'italic' }}>Working…</p>
-                      ) : (
-                        <div className="flex gap-1.5" style={{ marginTop: 4 }}>
-                          {sender.isSubscription && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); confirmUnsubSender(sender) }}
-                              disabled={!!acting || loading}
-                              className="gc-btn gc-btn-neutral"
-                              style={{ padding: '6px 10px', fontSize: '11.5px' }}
-                            >
-                              Unsubscribe…
-                            </button>
-                          )}
+                      <div className="flex gap-1.5" style={{ marginTop: 4 }}>
+                        {sender.isSubscription && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); confirmDeleteSender(sender) }}
-                            disabled={!!acting || loading}
-                            className="gc-btn gc-btn-danger"
+                            onClick={(e) => { e.stopPropagation(); confirmUnsubSender(sender) }}
+                            disabled={loading}
+                            className="gc-btn gc-btn-neutral"
                             style={{ padding: '6px 10px', fontSize: '11.5px' }}
                           >
-                            Delete all…
+                            Unsubscribe…
                           </button>
-                        </div>
-                      )}
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); confirmDeleteSender(sender) }}
+                          disabled={loading}
+                          className="gc-btn gc-btn-danger"
+                          style={{ padding: '6px 10px', fontSize: '11.5px' }}
+                        >
+                          Delete all…
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )
@@ -1103,7 +1254,7 @@ export default function SendersTab({ onAuthError, onAction }) {
           {selectedSubs.length > 0 && (
             <button
               onClick={confirmUnsubSelected}
-              disabled={loading || !!acting}
+              disabled={loading}
               className="gc-btn gc-btn-neutral flex-1"
               style={{ padding: '9px 6px', fontSize: 12 }}
             >
@@ -1112,7 +1263,7 @@ export default function SendersTab({ onAuthError, onAction }) {
           )}
           <button
             onClick={confirmDeleteSelected}
-            disabled={loading || !!acting}
+            disabled={loading}
             className="gc-btn gc-btn-danger flex-1"
             style={{ padding: '9px 6px', fontSize: 12 }}
           >
@@ -1121,7 +1272,7 @@ export default function SendersTab({ onAuthError, onAction }) {
           {selectedSubs.length > 0 && (
             <button
               onClick={confirmUnsubDeleteSelected}
-              disabled={loading || !!acting}
+              disabled={loading}
               className="gc-btn gc-btn-danger-solid"
               style={{ flex: 1.4, padding: '9px 6px', fontSize: 12 }}
             >
